@@ -1,4 +1,4 @@
-﻿#if __CONSTRAINED__ || UNITY_STANDALONE_LINUX || UNITY
+#if __CONSTRAINED__ || UNITY_STANDALONE_LINUX || UNITY
 using System;
 using System.Collections.Generic;
 using System.Net;
@@ -15,7 +15,6 @@ namespace Lidgren.Network
 		{
 		}
 
-		[CLSCompliant(false)]
 		public static ulong GetPlatformSeed(int seedInc)
 		{
 			ulong seed = (ulong)Environment.TickCount + (ulong)seedInc;

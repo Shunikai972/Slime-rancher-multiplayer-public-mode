@@ -94,7 +94,7 @@ namespace SRMultiplayer.Networking
                     GetVRObjects();
                 
                 m_VRUpdateTimer -= Time.deltaTime;
-                if (m_VRUpdateTimer <= 0 && m_WeaponVacuum != null)
+                if (m_VRUpdateTimer <= 0 && m_WeaponVacuum != null && LeftHandVR != null && RightHandVR != null && CameraVR != null)
                 {
                     new PacketVRPositions
                     {
@@ -108,7 +108,7 @@ namespace SRMultiplayer.Networking
                         rightRotation = RightHandVR.transform.rotation,
                         
                         ID = ID,
-                    }.Send();
+                    }.Send(Lidgren.Network.NetDeliveryMethod.Unreliable);
                     m_VRUpdateTimer = 0.1f;
                 }
             }

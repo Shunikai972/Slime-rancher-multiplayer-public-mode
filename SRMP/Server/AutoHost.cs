@@ -23,6 +23,7 @@ namespace SRMultiplayer.Server
 
         public AutoHostConfig Config { get; private set; }
         public bool IsHosting { get; private set; }
+        public bool IsIdlePaused { get; private set; }
 
         /// <summary>
         /// True while the host character should be unkillable. Gates the god mode
@@ -34,6 +35,11 @@ namespace SRMultiplayer.Server
         private float m_LastSave;
         private float m_LastShutdownCheck;
         private bool m_ShuttingDown;
+
+        private string ShutdownCompletePath
+        {
+            get { return Path.Combine(SRMP.ModDataPath, "server.stopped"); }
+        }
 
         public override void Awake()
         {
@@ -54,11 +60,12 @@ namespace SRMultiplayer.Server
             Globals.MaxPlayers = Mathf.Clamp(Config.MaxPlayers, 2, 64);
 
             ServerCommands.Operators.Clear();
-            if (Config.Operators != null)
+            if (Config.OperatorProductUserIds != null)
             {
-                foreach (var op in Config.Operators)
+                foreach (var productUserId in Config.OperatorProductUserIds)
                 {
-                    if (!string.IsNullOrEmpty(op)) ServerCommands.Operators.Add(op.Trim());
+                    if (!string.IsNullOrWhiteSpace(productUserId))
+                        ServerCommands.Operators.Add(productUserId.Trim());
                 }
             }
 
@@ -69,8 +76,8 @@ namespace SRMultiplayer.Server
                 ? (Config.LoadLatestSave ? "<most recent>" : "<new game>")
                 : Config.GameName));
             ServerLog(" slots    : " + Globals.MaxPlayers);
-            ServerLog(" operators: " + (ServerCommands.Operators.Count == 0
-                ? "<none - /tp unavailable>"
+            ServerLog(" operator EOS IDs: " + (ServerCommands.Operators.Count == 0
+                ? "<none configured>"
                 : string.Join(", ", ServerCommands.Operators.ToArray())));
             ServerLog(" config   : " + AutoHostConfig.ConfigPath);
             ServerLog("=====================================");
@@ -82,10 +89,11 @@ namespace SRMultiplayer.Server
         /// every connected player's round trip, because incoming packets are only
         /// drained once per frame.
         /// </summary>
-        private void ApplyFrameRate()
+        private void ApplyFrameRate(bool hasRemotePlayers)
         {
             QualitySettings.vSyncCount = 0;
-            Application.targetFrameRate = Config.TargetFrameRate > 0 ? Config.TargetFrameRate : -1;
+            int target = hasRemotePlayers ? Config.TargetFrameRate : Config.IdleTargetFrameRate;
+            Application.targetFrameRate = target > 0 ? target : -1;
         }
 
         private void Start()
@@ -101,19 +109,36 @@ namespace SRMultiplayer.Server
 
         private IEnumerator RunHost()
         {
-            yield return WaitForMainMenu();
-            yield return new WaitForSeconds(Config.StartupDelaySeconds);
+            bool menuLoaded = false;
+            yield return WaitForMainMenu(ok => menuLoaded = ok);
+            if (!menuLoaded)
+            {
+                AbortStartup("main menu did not become ready before the load timeout");
+                yield break;
+            }
+
+            yield return new WaitForSecondsRealtime(Config.StartupDelaySeconds);
 
             bool loggedIn = false;
             yield return WaitForLogin(ok => loggedIn = ok);
             if (!loggedIn)
             {
-                ServerLog("[AutoHost] EOS login did not complete, aborting host startup");
+                AbortStartup("EOS login did not complete before the login timeout");
                 yield break;
             }
 
-            if (!LoadWorld())
+            bool worldStarted = false;
+            Exception worldStartError = null;
+            try { worldStarted = LoadWorld(); }
+            catch (Exception ex) { worldStartError = ex; }
+            if (worldStartError != null)
             {
+                AbortStartup("could not start loading the world\n" + worldStartError);
+                yield break;
+            }
+            if (!worldStarted)
+            {
+                AbortStartup("world loading was not started");
                 yield break;
             }
 
@@ -121,15 +146,25 @@ namespace SRMultiplayer.Server
             yield return WaitForWorld(ok => loaded = ok);
             if (!loaded)
             {
-                ServerLog("[AutoHost] World did not finish loading, aborting host startup");
+                AbortStartup("world did not finish loading before the load timeout");
                 yield break;
             }
 
             //let the scene settle before the server walks every actor in it
-            yield return new WaitForSeconds(2f);
+            yield return new WaitForSecondsRealtime(2f);
 
             ServerLog("[AutoHost] Opening lobby...");
-            EpicApplication.Instance.Lobby.CreateLobby();
+            try
+            {
+                if (EpicApplication.Instance == null || EpicApplication.Instance.Lobby == null)
+                    throw new InvalidOperationException("EOS lobby interface was not initialized");
+                EpicApplication.Instance.Lobby.CreateLobby();
+            }
+            catch (Exception ex)
+            {
+                AbortStartup("could not create the EOS lobby\n" + ex);
+                yield break;
+            }
 
             float deadline = Time.realtimeSinceStartup + 60f;
             while (!Globals.IsServer && Time.realtimeSinceStartup < deadline)
@@ -139,16 +174,18 @@ namespace SRMultiplayer.Server
 
             if (!Globals.IsServer)
             {
-                ServerLog("[AutoHost] Lobby creation timed out, no server running");
+                AbortStartup("EOS lobby creation timed out");
                 yield break;
             }
 
             IsHosting = true;
 
-            ApplyFrameRate();
+            bool hasRemotePlayers = Globals.Players.Values.Any(player => player != null
+                && player.ID != Globals.LocalID && player.State == NetworkPlayerState.Connected);
+            ApplyFrameRate(hasRemotePlayers);
             ServerLog("[AutoHost] Target frame rate: "
-                      + (Config.TargetFrameRate > 0 ? Config.TargetFrameRate.ToString() : "uncapped")
-                      + ", vsync off");
+                      + (hasRemotePlayers ? Config.TargetFrameRate : Config.IdleTargetFrameRate)
+                      + " fps (" + (hasRemotePlayers ? "active" : "idle") + "), vsync off");
 
             //the host stays where the save put it. Moving it underground looked
             //tidy but sat inside a kill volume, and the resulting death/respawn
@@ -162,14 +199,27 @@ namespace SRMultiplayer.Server
             PublishServerCode();
         }
 
-        /// <summary>Waits until the main menu scene is the active one.</summary>
-        private IEnumerator WaitForMainMenu()
+        private void AbortStartup(string reason)
         {
-            while (SceneManager.GetActiveScene().buildIndex != MainMenuScene
-                   || SRSingleton<GameContext>.Instance == null)
+            ServerLog("[AutoHost] Startup failed: " + reason + "; exiting so the launcher can retry");
+            Application.Quit();
+        }
+
+        /// <summary>Waits for the main menu and game context, bounded by the load timeout.</summary>
+        private IEnumerator WaitForMainMenu(Action<bool> result)
+        {
+            float deadline = Time.realtimeSinceStartup + Config.LoadTimeoutSeconds;
+            while (Time.realtimeSinceStartup < deadline)
             {
+                if (SceneManager.GetActiveScene().buildIndex == MainMenuScene
+                    && SRSingleton<GameContext>.Instance != null)
+                {
+                    result(true);
+                    yield break;
+                }
                 yield return null;
             }
+            result(false);
         }
 
         /// <summary>Waits for the anonymous EOS device login to land.</summary>
@@ -401,8 +451,9 @@ namespace SRMultiplayer.Server
                 ServerLog("[AutoHost] Save failed during shutdown\n" + ex);
             }
 
-            //give the save and the outgoing chat packet a moment to flush
-            yield return new WaitForSeconds(saved ? 3f : 1f);
+            //Use realtime: an empty server has paused game time and must still
+            //be able to flush a save and stop cleanly.
+            yield return new WaitForSecondsRealtime(saved ? 3f : 1f);
 
             if (saved) ServerLog("[AutoHost] World saved");
 
@@ -425,7 +476,16 @@ namespace SRMultiplayer.Server
             }
 
             //give the close a moment to reach everyone before the process dies
-            yield return new WaitForSeconds(2f);
+            yield return new WaitForSecondsRealtime(2f);
+
+            try
+            {
+                File.WriteAllText(ShutdownCompletePath, DateTime.UtcNow.ToString("O"));
+            }
+            catch (Exception ex)
+            {
+                ServerLog("[AutoHost] Could not write clean-shutdown marker\n" + ex);
+            }
 
             ServerLog("[AutoHost] Closing lobby and quitting");
 
@@ -437,6 +497,44 @@ namespace SRMultiplayer.Server
         private void Update()
         {
             if (!IsHosting) return;
+
+            if (!m_ShuttingDown && !Globals.IsServer)
+            {
+                ServerLog("[AutoHost] EOS/P2P host stopped unexpectedly; exiting so the launcher can retry");
+                Application.Quit();
+                return;
+            }
+
+            bool hasRemotePlayers = Globals.Players.Values.Any(player =>
+                player != null && player.ID != Globals.LocalID
+                && player.State == NetworkPlayerState.Connected);
+            bool shouldPauseForEmptyServer = Config.PauseWhenNoPlayers && !hasRemotePlayers;
+            if (shouldPauseForEmptyServer != IsIdlePaused)
+            {
+                IsIdlePaused = shouldPauseForEmptyServer;
+                Time.timeScale = IsIdlePaused ? 0f : 1f;
+                ApplyFrameRate(hasRemotePlayers);
+                ServerLog("[AutoHost] Loop rate changed to "
+                          + (hasRemotePlayers ? Config.TargetFrameRate : Config.IdleTargetFrameRate)
+                          + " fps");
+                ServerLog(IsIdlePaused
+                    ? "[AutoHost] No remote players remain; pausing world time"
+                    : "[AutoHost] A remote player connected; resuming world time");
+
+                if (IsIdlePaused)
+                {
+                    try
+                    {
+                        SRSingleton<GameContext>.Instance.AutoSaveDirector.SaveAllNow();
+                        m_LastSave = Time.realtimeSinceStartup;
+                        ServerLog("[AutoHost] Saved world before idle pause");
+                    }
+                    catch (Exception ex)
+                    {
+                        ServerLog("[AutoHost] Save before idle pause failed\n" + ex);
+                    }
+                }
+            }
 
             //poll rather than use a FileSystemWatcher: this has to work across a
             //bind mount, where watcher events are not reliably delivered
@@ -467,12 +565,14 @@ namespace SRMultiplayer.Server
             {
                 m_LastStatus = Time.realtimeSinceStartup;
                 var names = Globals.Players.Values
-                    .Where(p => p != null && p.ID != Globals.LocalID)
+                    .Where(p => p != null && p.ID != Globals.LocalID
+                        && p.State == NetworkPlayerState.Connected)
+                    .Where(p => !string.IsNullOrEmpty(p.Username))
                     .Select(p => p.Username)
                     .ToList();
                 //the game reapplies its own quality settings at various points,
                 //so this is re-asserted rather than set once
-                ApplyFrameRate();
+                ApplyFrameRate(names.Count > 0);
 
                 ServerLog($"[AutoHost] code {Globals.ServerCode} | {SRMP.MeasuredFps} fps | "
                           + $"{names.Count} player(s) online"
@@ -486,7 +586,8 @@ namespace SRMultiplayer.Server
                 }
             }
 
-            if (Config.AutoSaveIntervalSeconds > 0f
+            if (!IsIdlePaused
+                && Config.AutoSaveIntervalSeconds > 0f
                 && Time.realtimeSinceStartup - m_LastSave > Config.AutoSaveIntervalSeconds)
             {
                 m_LastSave = Time.realtimeSinceStartup;

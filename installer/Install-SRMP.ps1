@@ -9,6 +9,7 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1') -ErrorAction Stop
 
 function Write-Step([string]$Message) {
     Write-Host "[SRMP] $Message" -ForegroundColor Cyan
@@ -31,6 +32,22 @@ function Test-SlimeRancherPath([string]$Path) {
            (Test-Path -LiteralPath (Join-Path $full 'SlimeRancher_Data') -PathType Container)
 }
 
+function Test-GameProcessRunning([string]$GamePath) {
+    $expectedExe = [System.IO.Path]::GetFullPath((Join-Path $GamePath 'SlimeRancher.exe'))
+    foreach ($process in (Get-Process -Name 'SlimeRancher' -ErrorAction SilentlyContinue)) {
+        try {
+            $runningExe = [System.IO.Path]::GetFullPath($process.Path)
+            if ([string]::Equals($runningExe, $expectedExe, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $true
+            }
+        } catch {
+            # If the running executable cannot be identified, fail closed.
+            return $true
+        }
+    }
+    return $false
+}
+
 function Add-UniquePath([System.Collections.Generic.List[string]]$List, [string]$Path) {
     $full = Get-FullPathSafe $Path
     if (-not $full) { return }
@@ -38,6 +55,38 @@ function Add-UniquePath([System.Collections.Generic.List[string]]$List, [string]
         if ([string]::Equals($existing, $full, [System.StringComparison]::OrdinalIgnoreCase)) { return }
     }
     $List.Add($full)
+}
+
+function Find-NearbySlimeRancher {
+    $candidates = New-Object 'System.Collections.Generic.List[string]'
+    $startPaths = @($PSScriptRoot, (Get-Location).Path)
+
+    foreach ($startPath in $startPaths) {
+        if (-not (Test-Path -LiteralPath $startPath -PathType Container)) { continue }
+        $probe = Get-Item -LiteralPath $startPath
+        $depth = 0
+        while ($probe -and $depth -le 4) {
+            if (Test-SlimeRancherPath $probe.FullName) { Add-UniquePath $candidates $probe.FullName }
+            try {
+                foreach ($child in (Get-ChildItem -LiteralPath $probe.FullName -Directory -Force -ErrorAction Stop)) {
+                    if (Test-SlimeRancherPath $child.FullName) { Add-UniquePath $candidates $child.FullName }
+                }
+            } catch { }
+
+            $probe = $probe.Parent
+            $depth++
+        }
+    }
+
+    if ($candidates.Count -eq 1) { return $candidates[0] }
+    if ($candidates.Count -gt 1) {
+        $withSrml = @($candidates | Where-Object {
+            Test-Path -LiteralPath (Join-Path $_ 'SRML\Mods') -PathType Container
+        })
+        if ($withSrml.Count -eq 1) { return $withSrml[0] }
+        throw "More than one nearby Slime Rancher install was found. Re-run with -GamePath to choose one: $($candidates -join '; ')"
+    }
+    return $null
 }
 
 function Get-SteamRoots {
@@ -123,21 +172,25 @@ Write-Host '        SRMP Revival - One Click Setup       ' -ForegroundColor Mage
 Write-Host '=============================================' -ForegroundColor Magenta
 Write-Host ''
 
-if (Get-Process -Name 'SlimeRancher' -ErrorAction SilentlyContinue) {
-    Fail 'Slime Rancher is currently running. Close the game and run the installer again.' 10
-}
-
 if ($GamePath) {
     $resolvedGame = Get-FullPathSafe $GamePath
     if (-not (Test-SlimeRancherPath $resolvedGame)) {
         Fail "The supplied -GamePath is not a valid Slime Rancher 1 installation: $GamePath" 11
     }
 } else {
-    Write-Step 'Looking for Slime Rancher 1...'
-    $resolvedGame = Find-SlimeRancher
+    Write-Step 'Looking for a portable Slime Rancher beside the installer...'
+    $resolvedGame = Find-NearbySlimeRancher
     if (-not $resolvedGame) {
-        Fail 'Could not locate Slime Rancher 1 automatically. Re-run with -GamePath "C:\Path\To\Slime Rancher".' 12
+        Write-Step 'No nearby portable game found; checking common Steam/Epic locations...'
+        $resolvedGame = Find-SlimeRancher
     }
+    if (-not $resolvedGame) {
+        Fail 'Could not locate Slime Rancher 1 automatically. Put the installer beside the game or re-run with -GamePath "C:\Path\To\Slime Rancher".' 12
+    }
+}
+
+if (Test-GameProcessRunning $resolvedGame) {
+    Fail "Slime Rancher is currently running from '$resolvedGame'. Close that copy before installing." 10
 }
 
 Write-Step "Game found: $resolvedGame"
@@ -176,16 +229,73 @@ try {
 }
 
 $destination = Join-Path $modsPath 'SRMP.dll'
-$backupDir = Join-Path $modsPath 'SRMP-Backups'
+$srmlPath = Split-Path -Parent $modsPath
+$backupDir = Join-Path $srmlPath 'Backups\SRMP'
+$legacyBackupDir = Join-Path $modsPath 'SRMP-Backups'
 $manifestPath = Join-Path $modsPath 'SRMP.install.json'
 $previousBackup = $null
 
+if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+    try {
+        $oldManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        if ($oldManifest.PreviousBackup) { $previousBackup = [string]$oldManifest.PreviousBackup }
+    } catch {
+        Write-Warning 'The existing install manifest could not be read; its rollback reference will be replaced.'
+    }
+}
+
+# SRML scans subdirectories of Mods for DLLs. Older installer builds placed
+# rollback DLLs there, which made every upgrade look like a duplicate SRMP mod.
+if (Test-Path -LiteralPath $legacyBackupDir -PathType Container) {
+    $legacyRoot = [System.IO.Path]::GetFullPath($legacyBackupDir).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    $modsRoot = [System.IO.Path]::GetFullPath($modsPath).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $legacyRoot.StartsWith($modsRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Fail "Legacy backup migration path is outside SRML\Mods: $legacyRoot" 20
+    }
+
+    $legacyDlls = @(Get-ChildItem -LiteralPath $legacyBackupDir -File -Filter '*.dll')
+    if ($legacyDlls.Count -gt 0) {
+        New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+        foreach ($legacyDll in $legacyDlls) {
+            $legacyFile = [System.IO.Path]::GetFullPath($legacyDll.FullName)
+            if (-not $legacyFile.StartsWith($legacyRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+                Fail "Legacy backup file is outside its expected directory: $legacyFile" 21
+            }
+
+            $migratedBackup = Join-Path $backupDir $legacyDll.Name
+            if (Test-Path -LiteralPath $migratedBackup -PathType Leaf) {
+                $migratedBackup = Join-Path $backupDir ("{0}-{1}.dll" -f $legacyDll.BaseName, [Guid]::NewGuid().ToString('N'))
+            }
+
+            Move-Item -LiteralPath $legacyFile -Destination $migratedBackup
+            if ($previousBackup -and [string]::Equals([System.IO.Path]::GetFullPath($previousBackup), $legacyFile, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $previousBackup = $migratedBackup
+            }
+            Write-Step "Moved legacy rollback DLL outside SRML\\Mods: $migratedBackup"
+        }
+
+        if ($previousBackup) {
+            $oldManifest.PreviousBackup = $previousBackup
+            $oldManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+        }
+    }
+}
+
 if (Test-Path -LiteralPath $destination -PathType Leaf) {
-    New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
-    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $previousBackup = Join-Path $backupDir "SRMP-$stamp.dll"
-    Write-Step "Backing up existing SRMP.dll to: $previousBackup"
-    Copy-Item -LiteralPath $destination -Destination $previousBackup -Force
+    $existingHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
+    if (-not [string]::Equals($existingHash, $hash, [System.StringComparison]::OrdinalIgnoreCase)) {
+        New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+        $previousBackup = Join-Path $backupDir "SRMP-$stamp-$PID.dll"
+        Write-Step "Backing up existing SRMP.dll to: $previousBackup"
+        Copy-Item -LiteralPath $destination -Destination $previousBackup
+        $backupHash = (Get-FileHash -LiteralPath $previousBackup -Algorithm SHA256).Hash
+        if (-not [string]::Equals($existingHash, $backupHash, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Fail 'Rollback backup checksum verification failed.' 22
+        }
+    } elseif ($previousBackup -and -not (Test-Path -LiteralPath $previousBackup -PathType Leaf)) {
+        $previousBackup = $null
+    }
 }
 
 $tempDestination = "$destination.new"

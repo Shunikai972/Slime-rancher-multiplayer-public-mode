@@ -1,4 +1,4 @@
-﻿using Lidgren.Network;
+using Lidgren.Network;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -13,6 +13,7 @@ namespace SRMultiplayer.Packets
         public int Total;
         public int Adjust;
         public short Type;
+        public byte Origin;
 
         public PacketPlayerCurrency() { }
         public PacketPlayerCurrency(NetIncomingMessage im) { Deserialize(im); }

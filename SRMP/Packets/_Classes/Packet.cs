@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using Lidgren.Network;
@@ -9,6 +10,20 @@ namespace SRMultiplayer.Packets
 {
     public abstract class Packet : IPacket
     {
+        /// <summary>
+        /// Reads a collection size from the wire and rejects values which
+        /// cannot be valid for the corresponding game data. This prevents a
+        /// corrupt or incompatible peer packet from causing enormous
+        /// allocations before the decoder reaches the truncated payload.
+        /// </summary>
+        protected static int ReadBoundedCount(NetIncomingMessage im, string field, int maximum)
+        {
+            int count = im.ReadInt32();
+            if (count < 0 || count > maximum)
+                throw new InvalidDataException("Invalid " + field + " count " + count + " (maximum " + maximum + ").");
+            return count;
+        }
+
         /// <summary>
         /// Parameterless constructor to be used through inheritance
         /// </summary>

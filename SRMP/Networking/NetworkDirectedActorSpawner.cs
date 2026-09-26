@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -13,6 +13,6 @@ namespace SRMultiplayer.Networking
         public DirectedActorSpawner Spawner;
         public NetworkRegion Region;
 
-        public bool IsLocal { get { return Region.IsLocal; } }
+        public bool IsLocal { get { return Region != null && Region.IsLocal; } }
     }
 }

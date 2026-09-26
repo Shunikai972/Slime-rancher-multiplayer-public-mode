@@ -1,4 +1,4 @@
-﻿using Lidgren.Network;
+using Lidgren.Network;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -11,6 +11,8 @@ namespace SRMultiplayer.Packets
     public class PacketDroneAmmoAdd : Packet
     {
         public string ID;
+        public int Count;
+        public bool Overflow;
         public ushort Ident;
 
         public PacketDroneAmmoAdd() { }

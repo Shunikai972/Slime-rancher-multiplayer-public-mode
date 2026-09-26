@@ -46,13 +46,8 @@ public class ChatUI : SRSingleton<ChatUI>
             return;
         }
 
-        // Only Return-to-open is handled here. Return-to-send is handled in
-        // OnGUI so one key-up cannot close the chat and then re-open it two
-        // frames later via FocusChat().
-        if (!openChat && Input.GetKeyUp(KeyCode.Return))
-        {
-            StartCoroutine(FocusChat());
-        }
+        if (!openChat)
+            foreach (var entry in messages) entry.FadeTime = Mathf.Max(0f, entry.FadeTime - Time.unscaledDeltaTime);
 
         if (openChat && Input.GetKeyUp(KeyCode.Escape))
         {
@@ -74,6 +69,7 @@ public class ChatUI : SRSingleton<ChatUI>
         "/tps - server tick rate",
         "/ping - your round trip time",
         "/list - who is online",
+        "/netstate - log local network state",
         "/home - teleport yourself to the ranch",
         "/tp <player> [dest|home] - operators only"
     };
@@ -144,6 +140,15 @@ public class ChatUI : SRSingleton<ChatUI>
         if (!Globals.IsMultiplayer)
             return;
 
+        // Open and send use the same IMGUI event stream. Consuming the
+        // opening event removes the delayed coroutine and key-up race.
+        if (!openChat && Event.current.type == EventType.KeyUp && Event.current.keyCode == KeyCode.Return)
+        {
+            openChat = true;
+            Event.current.Use();
+            return;
+        }
+
         Color originalColor = GUI.color;
         try
         {
@@ -166,7 +171,7 @@ public class ChatUI : SRSingleton<ChatUI>
                 DrawCommandHints(message);
 
                 GUI.SetNextControlName("ChatInput");
-                message = GUILayout.TextField(message ?? "");
+                message = GUILayout.TextField(message ?? "", 2048);
                 GUILayout.EndArea();
                 GUI.FocusControl("ChatInput");
 
@@ -187,11 +192,18 @@ public class ChatUI : SRSingleton<ChatUI>
 
                     if (!string.IsNullOrWhiteSpace(outgoing))
                     {
-                        if (Globals.IsServer)
+                        if (string.Equals(outgoing.Trim(), "/netstate", StringComparison.OrdinalIgnoreCase))
                         {
-                            string displayed = Globals.Username + ": " + outgoing;
-                            AddChatMessage(displayed);
-                            new PacketPlayerChat { message = displayed }.Send();
+                            NetworkDiagnostics.Capture();
+                        }
+                        else if (Globals.IsServer)
+                        {
+                            if (!SRMultiplayer.Server.ServerCommands.TryHandle(outgoing, Globals.LocalPlayer))
+                            {
+                                string displayed = Globals.Username + ": " + outgoing;
+                                AddChatMessage(displayed);
+                                new PacketPlayerChat { message = displayed }.Send();
+                            }
                         }
                         else if (Globals.IsClient)
                         {
@@ -218,7 +230,6 @@ public class ChatUI : SRSingleton<ChatUI>
                     if (msg.FadeTime <= 0f)
                         continue;
 
-                    msg.FadeTime -= Time.deltaTime;
                     Color c = originalColor;
                     c.a = Mathf.Clamp01(msg.FadeTime / 5f);
                     GUI.color = c;
@@ -257,21 +268,9 @@ public class ChatUI : SRSingleton<ChatUI>
     public void Clear()
     {
         messages.Clear();
-    }
-
-    /// <summary>
-    /// Open chat after the Return key event that requested it has completed.
-    /// </summary>
-    private IEnumerator FocusChat()
-    {
-        yield return new WaitForEndOfFrame();
-        yield return new WaitForEndOfFrame();
-
-        if (!Globals.IsMultiplayer || openChat)
-            yield break;
-
-        openChat = true;
-        GUI.FocusControl("ChatInput");
+        openChat = false;
+        message = "";
+        chatScroll = Vector2.zero;
     }
 
     /// <summary>

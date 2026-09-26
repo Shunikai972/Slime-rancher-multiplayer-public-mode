@@ -1,4 +1,4 @@
-﻿using Lidgren.Network;
+using Lidgren.Network;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -12,9 +12,11 @@ namespace SRMultiplayer.Packets
     public class PacketGordoEat : Packet
     {
         public string ID;
+        public bool Request;
+        public int FoodID;
         public Vector3 Position;
         public Quaternion Rotation;
-        public int Count;
+        public int Count; // Absolute host state; -1 means the Gordo has burst.
         public bool Favorite;
 
         public PacketGordoEat() { }

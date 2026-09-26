@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using MonomiPark.SlimeRancher.DataModel;
 using MonomiPark.SlimeRancher.Regions;
 using SRMultiplayer.Networking;
@@ -21,6 +21,18 @@ namespace SRMultiplayer.Patches
             Identifiable.Id id = Identifiable.GetId(actorObj);
 
             if (!Globals.IsClient || Identifiable.SCENE_OBJECTS.Contains(id) || id == Identifiable.Id.NONE) return true;
+
+            // A client normally suppresses scene-start actors because the host
+            // already owns and replicates them. When the host has never loaded
+            // this biome, however, the authoritative client is the only peer
+            // able to populate the region. Let its starting actors enter the
+            // normal RegisterActor path so they receive network IDs and are
+            // sent to the server; clients without region authority still skip
+            // them to prevent duplicate populations.
+            var member = actorObj != null ? actorObj.GetComponent<RegionMember>() : null;
+            bool ownsAnyMemberRegion = member != null && member.regions != null && member.regions.Any(region =>
+                region != null && region.GetComponent<NetworkRegion>()?.IsLocal == true);
+            if (ownsAnyMemberRegion) return true;
 
             GameObject.Destroy(actorObj);
             return false;
@@ -82,7 +94,7 @@ namespace SRMultiplayer.Patches
         static void Postfix(Vector3 pos, SpawnResourceModel.Participant part)
         {
             var netSpawnResource = ((SpawnResource)part).gameObject.GetOrAddComponent<NetworkSpawnResource>();
-            netSpawnResource.ID = ((SpawnResource)part).gameObject.GetGameObjectPath().GetHashCode();
+            netSpawnResource.ID = NetworkIdentity.ForScenePath(((SpawnResource)part).gameObject.GetGameObjectPath());
             netSpawnResource.SpawnResource = ((SpawnResource)part);
             if(netSpawnResource.LandPlot == null)
                 netSpawnResource.LandPlot = ((SpawnResource)part).GetComponentInParent<NetworkLandplot>(true);

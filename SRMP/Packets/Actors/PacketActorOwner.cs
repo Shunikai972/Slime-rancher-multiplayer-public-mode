@@ -1,4 +1,4 @@
-﻿using Lidgren.Network;
+using Lidgren.Network;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -12,6 +12,7 @@ namespace SRMultiplayer.Packets
     {
         public int ID;
         public byte Owner;
+        public bool Interaction;
 
         public PacketActorOwner() { }
         public PacketActorOwner(NetIncomingMessage im) { Deserialize(im); }

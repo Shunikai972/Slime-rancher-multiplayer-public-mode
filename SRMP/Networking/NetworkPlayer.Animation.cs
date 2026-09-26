@@ -1,4 +1,4 @@
-﻿using Lidgren.Network;
+using Lidgren.Network;
 using SRMultiplayer.Packets;
 using System.Collections;
 using System.Collections.Generic;
@@ -30,11 +30,18 @@ namespace SRMultiplayer.Networking
         IEnumerator SetupAnimator()
         {
             yield return new WaitForEndOfFrame();
+            if (m_Animator == null || !m_Animator)
+                yield break;
             // store the m_Animator parameters in a variable - the "Animator.parameters" getter allocates
             // a new parameter array every time it is accessed so we should avoid doing it in a loop
             parameters = m_Animator.parameters
                 .Where(par => !m_Animator.IsParameterControlledByCurve(par.nameHash))
                 .ToArray();
+            if (parameters.Length > 64)
+            {
+                SRMP.Log($"[Animation] Animator for {Username} has {parameters.Length} network parameters; only the first 64 can be synchronized by this protocol.");
+                parameters = parameters.Take(64).ToArray();
+            }
             lastIntParameters = new int[parameters.Length];
             lastFloatParameters = new float[parameters.Length];
             lastBoolParameters = new bool[parameters.Length];
@@ -42,11 +49,13 @@ namespace SRMultiplayer.Networking
             animationHash = new int[m_Animator.layerCount];
             transitionHash = new int[m_Animator.layerCount];
             layerWeight = new float[m_Animator.layerCount];
+            for (int i = 0; i < animationHash.Length; i++)
+                layerWeight[i] = m_Animator.GetLayerWeight(i);
         }
 
         void FixedUpdate()
         {
-            if (!IsLocal || !HasLoaded || !m_Animator.enabled)
+            if (!Globals.GameLoaded || !IsLocal || !HasLoaded || m_Animator == null || !m_Animator.enabled || parameters == null)
                 return;
 
             CheckSendRate();
@@ -90,12 +99,14 @@ namespace SRMultiplayer.Networking
 
         public void ReadAnimatorLayer(Queue<AnimationData> im)
         {
-            if (m_Animator == null) return;
+            if (m_Animator == null || !m_Animator || parameters == null || im == null || im.Count < 5) return;
 
             int stateHash = im.Dequeue().iData.Value;
             float normalizedTime = im.Dequeue().fData.Value;
             int layerNumber = im.Dequeue().iData.Value;
             float layerWeight = im.Dequeue().fData.Value;
+
+            if (layerNumber < 0 || layerNumber >= m_Animator.layerCount) return;
 
             if (stateHash != 0 && m_Animator.enabled)
             {
@@ -137,7 +148,7 @@ namespace SRMultiplayer.Networking
 
         public void ReadAnimatorSpeed(Queue<AnimationData> im)
         {
-            if (m_Animator == null) return;
+            if (m_Animator == null || !m_Animator || im == null || im.Count == 0) return;
 
             var newSpeed = im.Dequeue().fData.Value;
             // set m_Animator
@@ -175,12 +186,11 @@ namespace SRMultiplayer.Networking
             if (st.fullPathHash != animationHash[layerId])
             {
                 // first time in this animation state
-                if (animationHash[layerId] != 0)
-                {
-                    // came from another animation directly - from Play()
-                    stateHash = st.fullPathHash;
-                    normalizedTime = st.normalizedTime;
-                }
+                // Include the initial state too. Leaving stateHash at zero on
+                // the first update kept a newly joined player's model in T-pose
+                // until its next animation transition.
+                stateHash = st.fullPathHash;
+                normalizedTime = st.normalizedTime;
                 transitionHash[layerId] = 0;
                 animationHash[layerId] = st.fullPathHash;
                 return true;
@@ -277,13 +287,23 @@ namespace SRMultiplayer.Networking
         }
 
         public void ReadParameters(Queue<AnimationData> im)
-        {   //make sure 
-            if (m_Animator == null) return;
+        {
+            // SetupAnimator runs at end-of-frame after Spawn. Packets may arrive
+            // during that window, so ignore them until the parameter table exists.
+            if (m_Animator == null || !m_Animator || parameters == null || im == null || im.Count == 0) return;
 
             bool m_AnimatorEnabled = m_Animator.enabled;
 
             // need to read values from NetworkReader even if m_Animator is disabled
-            ulong dirtyBits = im.Dequeue().uData.Value;
+            var dirtyData = im.Dequeue();
+            if (!dirtyData.uData.HasValue) return;
+            ulong dirtyBits = dirtyData.uData.Value;
+            int valueCount = 0;
+            for (int i = 0; i < parameters.Length && i < 64; i++)
+                if ((dirtyBits & (1ul << i)) != 0 && parameters[i].type != AnimatorControllerParameterType.Trigger)
+                    valueCount++;
+            if (im.Count < valueCount) return;
+
             for (int i = 0; i < parameters.Length; i++)
             {
                 if ((dirtyBits & (1ul << i)) == 0)

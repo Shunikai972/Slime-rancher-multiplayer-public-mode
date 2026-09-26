@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using MonomiPark.SlimeRancher.DataModel;
 using SRMultiplayer;
 using SRMultiplayer.Networking;
@@ -11,16 +11,30 @@ using UnityEngine;
 
 namespace SRMultiplayer.Patches
 {
+    [HarmonyPatch(typeof(SlimeFeral), "RegistryUpdate")]
+    class SlimeFeral_RegistryUpdate
+    {
+        static bool Prefix(SlimeFeral __instance)
+        {
+            if (!Globals.IsMultiplayer) return true;
+            var actor = __instance.GetComponentInParent<NetworkActor>();
+            return actor != null && actor.IsLocal;
+        }
+    }
+
     [HarmonyPatch(typeof(SlimeFeral))]
     [HarmonyPatch("MakeFeral")]
     class SlimeFeral_MakeFeral
     {
-        static void Prefix(SlimeFeral __instance)
+        static bool Prefix(SlimeFeral __instance)
         {
-            if (!Globals.IsMultiplayer || Globals.HandlePacket) return;
+            if (!Globals.IsMultiplayer) return true;
+            // SetModel and a later live update can both request the same aura.
+            if (__instance.model != null && __instance.model.isFeral && __instance.aura != null) return false;
+            if (Globals.HandlePacket) return true;
 
             var netActor = __instance.GetComponentInParent<NetworkActor>();
-            if (netActor != null)
+            if (netActor != null && netActor.IsLocal)
             {
                 new PacketActorFeral()
                 {
@@ -29,6 +43,7 @@ namespace SRMultiplayer.Patches
                     Deagitate = false
                 }.Send();
             }
+            return true;
         }
     }
 
@@ -41,7 +56,7 @@ namespace SRMultiplayer.Patches
             if (!Globals.IsMultiplayer || Globals.HandlePacket) return;
 
             var netActor = __instance.GetComponentInParent<NetworkActor>();
-            if (netActor != null)
+            if (netActor != null && netActor.IsLocal)
             {
                 new PacketActorFeral()
                 {

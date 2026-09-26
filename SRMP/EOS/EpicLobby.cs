@@ -1,7 +1,6 @@
-﻿using Epic.OnlineServices;
+using Epic.OnlineServices;
 using UnityEngine;
 using Epic.OnlineServices.Lobby;
-using Epic.OnlineServices.RTC;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -16,11 +15,12 @@ namespace SRMultiplayer.EpicSDK
     public class EpicLobby
     {
         private LobbyInterface lobbyInterface;
+        private int generation;
+        private bool operationPending;
 
         private ulong? addNotifyLobbyMemberStatusReceivedHandle;
         private ulong? addNotifyLobbyMemberUpdateReceivedHandle;
         private ulong? addNotifyLobbyUpdateReceivedHandle;
-        private ulong? addNotifyRTCRoomConnectionChangedHandle;
 
         public Utf8String LobbyId { get; private set; }
         public bool IsInLobby => LobbyId != null;
@@ -69,28 +69,6 @@ namespace SRMultiplayer.EpicSDK
                 addNotifyLobbyUpdateReceivedHandle = lobbyInterface.AddNotifyLobbyUpdateReceived(ref addNotifyLobbyUpdateReceivedOptions, null, OnLobbyUpdateReceived);
             }
 
-            if (!addNotifyRTCRoomConnectionChangedHandle.HasValue)
-            {
-                var addNotifyRTCRoomConnectionChangedOptions = new AddNotifyRTCRoomConnectionChangedOptions()
-                {
-
-                };
-                addNotifyRTCRoomConnectionChangedHandle = lobbyInterface.AddNotifyRTCRoomConnectionChanged(ref addNotifyRTCRoomConnectionChangedOptions, null, OnRTCRoomConnectionChanged);
-            }
-
-            var getRTCRoomNameOptions = new GetRTCRoomNameOptions()
-            {
-                LobbyId = LobbyId,
-                LocalUserId = SRSingleton<EpicApplication>.Instance.Authentication.ProductUserId
-            };
-            var result = lobbyInterface.GetRTCRoomName(ref getRTCRoomNameOptions, out var roomName);
-            if (result == Result.Success)
-            {
-            }
-            else
-            {
-                SRMultiplayer.SRMP.Log($"GetRTCRoomName -> {result}");
-            }
         }
 
         private void UnregisterEvents()
@@ -110,17 +88,6 @@ namespace SRMultiplayer.EpicSDK
                 lobbyInterface.RemoveNotifyLobbyUpdateReceived(addNotifyLobbyUpdateReceivedHandle.Value);
                 addNotifyLobbyUpdateReceivedHandle = null;
             }
-            if (addNotifyRTCRoomConnectionChangedHandle.HasValue)
-            {
-                lobbyInterface.RemoveNotifyRTCRoomConnectionChanged(addNotifyRTCRoomConnectionChangedHandle.Value);
-                addNotifyRTCRoomConnectionChangedHandle = null;
-            }
-
-        }
-
-        private void OnRTCRoomConnectionChanged(ref RTCRoomConnectionChangedCallbackInfo data)
-        {
-            SRMultiplayer.SRMP.Log($"{data.LocalUserId} {data.LobbyId} {data.IsConnected} {data.DisconnectReason}");
         }
 
         private void OnLobbyUpdateReceived(ref LobbyUpdateReceivedCallbackInfo data)
@@ -135,22 +102,28 @@ namespace SRMultiplayer.EpicSDK
 
         private void OnLobbyMemberStatusReceived(ref LobbyMemberStatusReceivedCallbackInfo data)
         {
+            if (LobbyId == null || data.LobbyId != LobbyId) return;
             SRMultiplayer.SRMP.Log($"{data.LobbyId} {data.TargetUserId} {data.CurrentStatus}");
             if(data.TargetUserId == SRSingleton<EpicApplication>.Instance.Authentication.ProductUserId)
             {
-                if(data.CurrentStatus == LobbyMemberStatus.Closed)
+                if(data.CurrentStatus == LobbyMemberStatus.Closed || data.CurrentStatus == LobbyMemberStatus.Kicked || data.CurrentStatus == LobbyMemberStatus.Disconnected)
                 {
-                    NetworkClient.Shutdown();
-                    NetworkClient = null;
-                    UnregisterEvents();
-                    LobbyId = null;
+                    ForceReset("lobby closed", false);
                 }
             }
         }
 
         public void CreateLobby()
         {
-            if(LobbyId != null)
+            var authentication = SRSingleton<EpicApplication>.Instance.Authentication;
+            if (authentication == null || !authentication.IsLoggedIn || authentication.ProductUserId == null)
+            {
+                SRMultiplayer.SRMP.Log("[Lobby] Cannot host before EOS login has completed.");
+                MultiplayerUI.Instance?.ConnectResponse(MultiplayerUI.ConnectError.Message,
+                    "Epic Online Services is still signing in. Wait a moment, then try again.");
+                return;
+            }
+            if (LobbyId != null || operationPending)
             {
                 SRMultiplayer.SRMP.Log($"Already in a lobby");
                 return;
@@ -165,25 +138,25 @@ namespace SRMultiplayer.EpicSDK
                 CrossplayOptOut = false,
                 DisableHostMigration = true,
                 EnableJoinById = true,
-                EnableRTCRoom = true,
                 LobbyId = GenerateServerCode(),
-                LocalRTCOptions = new LocalRTCOptions()
-                {
-                    LocalAudioDeviceInputStartsMuted = false,
-                    UseManualAudioInput = false,
-                    UseManualAudioOutput = true,
-                    Flags = (uint)JoinRoomFlags.EnableEcho
-                },
                 LocalUserId = SRSingleton<EpicApplication>.Instance.Authentication.ProductUserId,
                 MaxLobbyMembers = (uint)Mathf.Clamp(Globals.MaxPlayers, 2, 64),
                 PermissionLevel = LobbyPermissionLevel.Joinviapresence,
                 PresenceEnabled = false,
             };
-            lobbyInterface.CreateLobby(ref createLobbyOptions, null, OnCreateLobby);
+            operationPending = true;
+            lobbyInterface.CreateLobby(ref createLobbyOptions, ++generation, OnCreateLobby);
         }
 
         private void OnCreateLobby(ref CreateLobbyCallbackInfo data)
         {
+            if (!(data.ClientData is int token) || token != generation)
+            {
+                if (data.ResultCode == Result.Success && data.LobbyId != LobbyId)
+                    ReleaseRemote(data.LobbyId, true);
+                return;
+            }
+            operationPending = false;
             SRMultiplayer.SRMP.Log($"Result -> {data.ResultCode}");
             if(data.ResultCode != Result.Success)
             {
@@ -200,7 +173,24 @@ namespace SRMultiplayer.EpicSDK
 
         public void JoinLobby(string lobbyId)
         {
-            if (LobbyId != null)
+            lobbyId = ServerCode.Normalize(lobbyId);
+            if (!ServerCode.IsValid(lobbyId))
+            {
+                SRMultiplayer.SRMP.Log("[Lobby] Join rejected: server codes must contain exactly 7 letters or digits.");
+                MultiplayerUI.Instance?.ConnectResponse(MultiplayerUI.ConnectError.Message, "The server code must contain exactly 7 letters or digits.");
+                return;
+            }
+
+            var authentication = SRSingleton<EpicApplication>.Instance.Authentication;
+            if (authentication == null || !authentication.IsLoggedIn || authentication.ProductUserId == null)
+            {
+                SRMultiplayer.SRMP.Log("[Lobby] Cannot join before EOS login has completed.");
+                MultiplayerUI.Instance?.ConnectResponse(MultiplayerUI.ConnectError.Message,
+                    "Epic Online Services is still signing in. Wait a moment, then try again.");
+                return;
+            }
+
+            if (LobbyId != null || operationPending)
             {
                 SRMultiplayer.SRMP.Log($"Already in a lobby");
                 return;
@@ -209,25 +199,28 @@ namespace SRMultiplayer.EpicSDK
             var joinLobbyOptions = new JoinLobbyByIdOptions()
             {
                 CrossplayOptOut = false,
-                LocalRTCOptions = new LocalRTCOptions()
-                {
-                    LocalAudioDeviceInputStartsMuted = false,
-                    UseManualAudioInput = false,
-                    UseManualAudioOutput = true,
-                    Flags = 0
-                },
                 LocalUserId = SRSingleton<EpicApplication>.Instance.Authentication.ProductUserId,
                 PresenceEnabled = false,
                 LobbyId = lobbyId
             };
-            lobbyInterface.JoinLobbyById(ref joinLobbyOptions, null, OnJoinLobby);
+            operationPending = true;
+            lobbyInterface.JoinLobbyById(ref joinLobbyOptions, ++generation, OnJoinLobby);
         }
 
         private void OnJoinLobby(ref JoinLobbyByIdCallbackInfo data)
         {
+            if (!(data.ClientData is int token) || token != generation)
+            {
+                if (data.ResultCode == Result.Success && data.LobbyId != LobbyId)
+                    ReleaseRemote(data.LobbyId, false);
+                return;
+            }
+            operationPending = false;
             SRMultiplayer.SRMP.Log($"Result -> {data.ResultCode}");
             if(data.ResultCode != Result.Success)
             {
+                MultiplayerUI.Instance?.ConnectResponse(MultiplayerUI.ConnectError.Message,
+                    "Could not join the server (" + data.ResultCode + "). Check the code and make sure the host is online.");
                 return;
             }
 
@@ -236,23 +229,29 @@ namespace SRMultiplayer.EpicSDK
             RegisterEvents();
 
             var lobbyDetails = GetLobbyDetails();
-            if(lobbyDetails == null)
+            if (lobbyDetails == null)
             {
-                SRMultiplayer.SRMP.Log($"Couldn't get LobbyDetails");
+                ForceReset("join did not supply lobby details");
                 return;
             }
-            var lobbyDetailsGetLobbyOwnerOptions = new LobbyDetailsGetLobbyOwnerOptions() { };
-            var ownerUserId = lobbyDetails.GetLobbyOwner(ref lobbyDetailsGetLobbyOwnerOptions);
-            if(ownerUserId == null)
+            try
             {
-                SRMultiplayer.SRMP.Log($"Couldn't get LobbyOwner");
-                return;
+                var options = new LobbyDetailsGetLobbyOwnerOptions();
+                var owner = lobbyDetails.GetLobbyOwner(ref options);
+                if (owner == null) { ForceReset("join did not supply an owner"); return; }
+                var localUserId = SRSingleton<EpicApplication>.Instance.Authentication.ProductUserId;
+                if (NetworkIdentity.IsSameProductUser(localUserId?.ToString(), owner.ToString()))
+                {
+                    const string message = "You are already running this server with the same EOS identity. Join from another EOS account/device, or host from this game instead.";
+                    SRMP.Log("[Join] Blocked self-join: local and lobby owner Product User IDs match.");
+                    MultiplayerUI.Instance?.ConnectResponse(MultiplayerUI.ConnectError.Message, message);
+                    ForceReset("self-join uses the host EOS identity", false);
+                    return;
+                }
+                NetworkClient = SRSingleton<EpicApplication>.Instance.CreateClient();
+                NetworkClient.Connect(owner);
             }
-
-            NetworkClient = SRSingleton<EpicApplication>.Instance.CreateClient();
-            NetworkClient.Connect(ownerUserId);
-
-            lobbyDetails.Release();
+            finally { lobbyDetails.Release(); }
         }
 
         public void LeaveLobby()
@@ -265,24 +264,14 @@ namespace SRMultiplayer.EpicSDK
                 LocalUserId = SRSingleton<EpicApplication>.Instance.Authentication.ProductUserId,
                 LobbyId = LobbyId
             };
-            lobbyInterface.LeaveLobby(ref leaveLobbyOptions, null, OnLeaveLobby);
+            lobbyInterface.LeaveLobby(ref leaveLobbyOptions, generation, OnLeaveLobby);
         }
 
         private void OnLeaveLobby(ref LeaveLobbyCallbackInfo data)
         {
-            SRMP.Log($"Result -> {data.ResultCode}");
-            if(data.ResultCode != Result.Success)
-            {
-                //the remote side is already gone or unreachable; keeping local
-                //state would only block the next join
-                ForceReset($"leave failed ({data.ResultCode})");
-                return;
-            }
-
-            NetworkClient.Shutdown();
-            NetworkClient = null;
-            UnregisterEvents();
-            LobbyId = null;
+            if (!(data.ClientData is int token) || token != generation || data.LobbyId != LobbyId) return;
+            SRMP.Log($"[Lobby] OnLeaveLobby -> {data.ResultCode}");
+            ForceReset("OnLeaveLobby completed", false);
         }
 
         /// <summary>
@@ -294,22 +283,56 @@ namespace SRMultiplayer.EpicSDK
         /// which strands the player: they cannot rejoin and cannot host their
         /// own world until they restart the game.
         /// </summary>
-        public void ForceReset(string reason)
+        public void ForceReset(string reason, bool releaseRemote = true)
         {
-            if (LobbyId == null && NetworkClient == null && NetworkServer == null) return;
-
-            SRMP.Log($"[Lobby] Forcing local lobby state reset: {reason}");
-
-            try { NetworkClient?.Shutdown(); } catch { }
-            try { NetworkServer?.Shutdown(); } catch { }
-
+            if (LobbyId == null && NetworkClient == null && NetworkServer == null && !operationPending) return;
+            SRMP.Log($"[Lobby] Reset: {reason}");
+            var client = NetworkClient;
+            var server = NetworkServer;
+            var lobby = LobbyId;
+            bool owner = IsLobbyOwner;
+            // Shutdown can synchronously load the main menu and re-enter here.
+            // Invalidate handles and pending callbacks before doing any of it.
+            generation++;
+            operationPending = false;
             NetworkClient = null;
             NetworkServer = null;
-
-            try { UnregisterEvents(); } catch { }
-
             LobbyId = null;
             IsLobbyOwner = false;
+            try { UnregisterEvents(); } catch (Exception ex) { SRMP.Log($"[Lobby] Unregister failed: {ex}"); }
+            try { client?.Shutdown(); } catch (Exception ex) { SRMP.Log($"[Lobby] Client shutdown failed: {ex}"); }
+            try { server?.Shutdown(); } catch (Exception ex) { SRMP.Log($"[Lobby] Server shutdown failed: {ex}"); }
+            var authentication = SRSingleton<EpicApplication>.Instance?.Authentication;
+            if (releaseRemote && lobby != null && authentication != null && authentication.IsLoggedIn
+                && authentication.ProductUserId != null)
+                ReleaseRemote(lobby, owner);
+            else if (releaseRemote && lobby != null)
+                SRMultiplayer.SRMP.Log("[Lobby] Local EOS identity is unavailable; skipped the remote leave/destroy request.");
+        }
+
+        private void ReleaseRemote(Utf8String lobby, bool owner)
+        {
+            var user = SRSingleton<EpicApplication>.Instance.Authentication.ProductUserId;
+            if (owner)
+            {
+                var options = new DestroyLobbyOptions { LobbyId = lobby, LocalUserId = user };
+                lobbyInterface.DestroyLobby(ref options, null, OnReleasedOwner);
+            }
+            else
+            {
+                var options = new LeaveLobbyOptions { LobbyId = lobby, LocalUserId = user };
+                lobbyInterface.LeaveLobby(ref options, null, OnReleasedMember);
+            }
+        }
+
+        private static void OnReleasedOwner(ref DestroyLobbyCallbackInfo data)
+        {
+            SRMP.Log($"[Lobby] Released {data.LobbyId}: {data.ResultCode}");
+        }
+
+        private static void OnReleasedMember(ref LeaveLobbyCallbackInfo data)
+        {
+            SRMP.Log($"[Lobby] Left {data.LobbyId}: {data.ResultCode}");
         }
 
         public void KickMember(ProductUserId targetUserId)
@@ -338,22 +361,14 @@ namespace SRMultiplayer.EpicSDK
                 LobbyId = LobbyId,
                 LocalUserId = SRSingleton<EpicApplication>.Instance.Authentication.ProductUserId
             };
-            lobbyInterface.DestroyLobby(ref destroyLobbyOptions, null, OnDestroyLobby);
+            lobbyInterface.DestroyLobby(ref destroyLobbyOptions, generation, OnDestroyLobby);
         }
 
         private void OnDestroyLobby(ref DestroyLobbyCallbackInfo data)
         {
-            SRMP.Log($"Result -> {data.ResultCode}");
-            if (data.ResultCode != Result.Success)
-            {
-                ForceReset($"destroy failed ({data.ResultCode})");
-                return;
-            }
-
-            NetworkServer.Shutdown();
-            NetworkServer = null;
-            UnregisterEvents();
-            LobbyId = null;
+            if (!(data.ClientData is int token) || token != generation || data.LobbyId != LobbyId) return;
+            SRMP.Log($"[Lobby] OnDestroyLobby -> {data.ResultCode}");
+            ForceReset("OnDestroyLobby completed", false);
         }
 
         private LobbyDetails GetLobbyDetails()
@@ -393,16 +408,7 @@ namespace SRMultiplayer.EpicSDK
         
         public static string GenerateServerCode()
         {
-            const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-            System.Random random = new System.Random();
-            char[] result = new char[7];
-
-            for (int i = 0; i < 7; i++)
-            {
-                result[i] = chars[random.Next(chars.Length)];
-            }
-
-            return new string(result);
+            return ServerCode.Generate();
         }
 
     }

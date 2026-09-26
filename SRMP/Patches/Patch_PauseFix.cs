@@ -1,8 +1,9 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using SRMultiplayer.Server;
 using UnityEngine;
 
 namespace SRMultiplayer.Patches
@@ -15,7 +16,13 @@ namespace SRMultiplayer.Patches
         {
             if (Globals.IsMultiplayer)
             {
-                Time.timeScale = 1f;
+                var autoHost = AutoHost.Instance;
+                bool pauseForEmptyServer = autoHost != null
+                    && autoHost.IsHosting
+                    && autoHost.Config != null
+                    && autoHost.Config.PauseWhenNoPlayers
+                    && autoHost.IsIdlePaused;
+                Time.timeScale = pauseForEmptyServer ? 0f : 1f;
             }
 
             if (Globals.PauseState == PauseState.Pause && __instance.pauserCount <= 0)

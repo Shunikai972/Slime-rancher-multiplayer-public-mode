@@ -1,4 +1,4 @@
-﻿using MonomiPark.SlimeRancher.Regions;
+using MonomiPark.SlimeRancher.Regions;
 using SRMultiplayer.Packets;
 using System;
 using System.Collections.Generic;
@@ -14,10 +14,11 @@ namespace SRMultiplayer.Networking
         public Drone Drone;
         public NetworkRegion Region;
 
-        public bool IsLocal { get { return Region.IsLocal; } }
+        public bool IsLocal { get { return Region != null && Region.IsLocal; } }
 
         private RegionMember m_RegionMember;
         private float m_MovementUpdateTimer;
+        private float m_LastPositionSent;
         private Vector3 m_ActualPosition;
         private Vector3 m_LatestPosition;
         private Vector3 m_PreviousPosition;
@@ -34,17 +35,19 @@ namespace SRMultiplayer.Networking
 
         private void OnDestroy()
         {
-            Region.OnBecameOwner -= OnBecameOwner;
+            if (Region != null) Region.OnBecameOwner -= OnBecameOwner;
         }
 
         private void OnBecameOwner()
         {
-            Drone.plexer.ForceRethink();
+            if (Drone != null && Drone.plexer != null) Drone.plexer.ForceRethink();
         }
 
         private void Start()
         {
-            Region.OnBecameOwner += OnBecameOwner;
+            if (Region == null) Region = gameObject.GetInParent<NetworkRegion>();
+            if (Region != null) Region.OnBecameOwner += OnBecameOwner;
+            if (IsLocal) OnBecameOwner();
 
             m_LatestPosition = transform.position;
             m_LatestPositionTime = Time.time + m_InterpolationPeriod;
@@ -57,13 +60,16 @@ namespace SRMultiplayer.Networking
 
         private void Update()
         {
+            if (!Globals.IsMultiplayer || !Globals.GameLoaded || Drone == null || Drone.droneModel == null) return;
             if (IsLocal)
             {
                 m_MovementUpdateTimer -= Time.deltaTime;
                 if (m_MovementUpdateTimer <= 0)
                 {
-                    if (Vector3.Distance(m_ActualPosition, transform.position) > 0.1f || Vector3.Distance(m_ActualRotation.eulerAngles, transform.eulerAngles) > 0.1f)
+                    m_MovementUpdateTimer = 0.1f;
+                    if (Time.unscaledTime - m_LastPositionSent >= 1f || Vector3.Distance(m_ActualPosition, transform.position) > 0.1f || Quaternion.Angle(m_ActualRotation, transform.rotation) > 0.1f)
                     {
+                        m_LastPositionSent = Time.unscaledTime;
                         m_LatestPosition = transform.position;
                         m_LatestPositionTime = Time.time + m_InterpolationPeriod;
                         m_PreviousPosition = m_LatestPosition;

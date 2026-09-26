@@ -1,4 +1,4 @@
-﻿using Lidgren.Network;
+using Lidgren.Network;
 using MonomiPark.SlimeRancher.DataModel;
 using MonomiPark.SlimeRancher.Regions;
 using Newtonsoft.Json;
@@ -45,7 +45,8 @@ namespace SRMultiplayer.Networking
             }
             set
             {
-                m_RegionMember.actorModel.currRegionSetId = value;
+                if (m_RegionMember != null && m_RegionMember.actorModel != null)
+                    m_RegionMember.actorModel.currRegionSetId = value;
                 m_RegionSet = value;
             }
         }
@@ -54,7 +55,7 @@ namespace SRMultiplayer.Networking
             get
             {
                 QuicksilverEnergyGenerator generator = null;
-                foreach (var region in Globals.LocalPlayer.Regions)
+                foreach (var region in Regions)
                 {
                     generator = region.GetComponent<QuicksilverEnergyGenerator>();
                     if (generator != null)
@@ -70,6 +71,8 @@ namespace SRMultiplayer.Networking
         private RegionMember m_RegionMember;
         private Transform m_Label;
         private float m_MovementUpdateTimer;
+        private float m_LastPositionSent;
+        private float m_RawWeaponPitch;
         private Vector3 m_ActualPosition; // where we render
         private Vector3 m_LatestPosition; // last position reported by server
         private float m_LatestPositionTime; // the time we want to arrive at the last position reported by server
@@ -110,17 +113,19 @@ namespace SRMultiplayer.Networking
 
         private void Update()
         {
-            if (!HasLoaded) return;
+            if (!HasLoaded || !Globals.GameLoaded) return;
             
             if(IsLocal)
             {
                 m_MovementUpdateTimer -= Time.deltaTime;
                 if (m_MovementUpdateTimer <= 0 && m_WeaponVacuum != null)
                 {
-                    if (Vector3.Distance(m_ActualPosition, SRSingleton<SceneContext>.Instance.Player.transform.position) > 0.1f || 
+                    m_MovementUpdateTimer = 0.1f;
+                    if (Time.unscaledTime - m_LastPositionSent >= 1f || Vector3.Distance(m_ActualPosition, SRSingleton<SceneContext>.Instance.Player.transform.position) > 0.1f ||
                         !Utils.CloseEnoughForMe(m_ActualRotation, SRSingleton<SceneContext>.Instance.Player.transform.eulerAngles.y, 0.1f) ||
                         !Utils.CloseEnoughForMe(m_ActualWeaponY, m_WeaponVacuum.transform.eulerAngles.x, 0.1f))
                     {
+                        m_LastPositionSent = Time.unscaledTime;
                         m_ActualPosition = SRSingleton<SceneContext>.Instance.Player.transform.position;
                         m_ActualRotation = SRSingleton<SceneContext>.Instance.Player.transform.eulerAngles.y;
                         m_ActualWeaponY = m_WeaponVacuum.transform.eulerAngles.x;
@@ -133,7 +138,7 @@ namespace SRMultiplayer.Networking
                             Rotation = SRSingleton<SceneContext>.Instance.Player.transform.eulerAngles.y,
                             RegionSet = (byte)SRSingleton<SceneContext>.Instance.PlayerState.model.currRegionSetId,
                             WeaponY = m_WeaponVacuum.transform.eulerAngles.x
-                        }.Send();
+                        }.Send(NetDeliveryMethod.Unreliable);
                     }
                     m_Animator.SetFloat("MoveX", SRInput.Actions.horizontal);
                     m_Animator.SetFloat("MoveY", SRInput.Actions.vertical);
@@ -141,7 +146,7 @@ namespace SRMultiplayer.Networking
             }
             else
             {
-                if (m_Label != null)
+                if (m_Label != null && Camera.main != null)
                 {
                     m_Label.rotation = Quaternion.LookRotation(m_Label.position - Camera.main.transform.position);
                 }
@@ -172,6 +177,7 @@ namespace SRMultiplayer.Networking
 
         public void UpdateWeaponRotation(float angle)
         {
+            m_RawWeaponPitch = angle;
             if (angle > 180)
                 angle -= 360;
 
@@ -212,6 +218,7 @@ namespace SRMultiplayer.Networking
 
         internal void Spawn()
         {
+            if (PlayerObj != null) return;
             SRMP.Log("Spawning " + Username);
 
             PlayerObj = GameObject.Instantiate(Globals.BeatrixModel);
@@ -325,39 +332,39 @@ namespace SRMultiplayer.Networking
 
         internal void Save()
         {
-            var path = Path.Combine(SRMP.ModDataPath, SRSingleton<GameContext>.Instance.AutoSaveDirector.SavedGame.GetName(), UUID.ToString() + ".json");
-            File.WriteAllText(path, JsonConvert.SerializeObject(new NetworkPlayerSave()
+            if (UUID == Guid.Empty || !HasLoaded) return;
+            try
             {
-                LastUsername = Username,
-                RegionSet = (byte)CurrentRegionSet,
-                WeaponY = m_LatestWeaponY,
-                PositionX = transform.position.x,
-                PositionY = transform.position.y,
-                PositionZ = transform.position.z,
-                Rotation = transform.eulerAngles.y
-            }));
+                var path = Path.Combine(SRMP.ModDataPath, SRSingleton<GameContext>.Instance.AutoSaveDirector.SavedGame.GetName(), UUID + ".json");
+                AtomicFile.WriteText(path, JsonConvert.SerializeObject(new NetworkPlayerSave
+                {
+                    LastUsername = Username, RegionSet = (byte)CurrentRegionSet,
+                    WeaponY = m_RawWeaponPitch, PositionX = transform.position.x,
+                    PositionY = transform.position.y, PositionZ = transform.position.z,
+                    Rotation = transform.eulerAngles.y
+                }));
+            }
+            catch (Exception ex) { SRMP.Log($"[Save] Player {ID} could not be saved: {ex}"); }
         }
 
         internal void Load()
         {
-            var path = Path.Combine(SRMP.ModDataPath, SRSingleton<GameContext>.Instance.AutoSaveDirector.SavedGame.GetName(), UUID.ToString() + ".json");
-            if (File.Exists(path))
+            var path = Path.Combine(SRMP.ModDataPath, SRSingleton<GameContext>.Instance.AutoSaveDirector.SavedGame.GetName(), UUID + ".json");
+            if (!File.Exists(path)) return;
+            try
             {
-                var playerSave = JsonConvert.DeserializeObject<NetworkPlayerSave>(File.ReadAllText(path));
-                transform.position = new Vector3(playerSave.PositionX, playerSave.PositionY, playerSave.PositionZ);
-                transform.eulerAngles = new Vector3(0, playerSave.Rotation, 0);
-                UpdateWeaponRotation(playerSave.WeaponY);
-                CurrentRegionSet = (RegionRegistry.RegionSetId)playerSave.RegionSet;
-
-                new PacketPlayerPosition()
+                var saved = JsonConvert.DeserializeObject<NetworkPlayerSave>(File.ReadAllText(path));
+                PositionRotationUpdate(new Vector3(saved.PositionX, saved.PositionY, saved.PositionZ), saved.Rotation, true);
+                UpdateWeaponRotation(saved.WeaponY);
+                CurrentRegionSet = (RegionRegistry.RegionSetId)saved.RegionSet;
+                new PacketPlayerPosition
                 {
-                    ID = ID,
-                    Position = transform.position,
-                    Rotation = transform.eulerAngles.y,
-                    WeaponY = m_LatestWeaponY,
-                    RegionSet = (byte)CurrentRegionSet
+                    ID = ID, Position = transform.position, Rotation = saved.Rotation,
+                    WeaponY = saved.WeaponY, RegionSet = saved.RegionSet, OnLoad = true
                 }.Send(this);
+                SRMP.Log($"[Save] Restored player {ID}, region={saved.RegionSet}, position={transform.position}");
             }
+            catch (Exception ex) { SRMP.Log($"[Save] Player {ID} could not be restored: {ex}"); }
         }
 
         internal void OnLeft()

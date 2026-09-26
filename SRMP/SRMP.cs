@@ -1,4 +1,4 @@
-﻿using Lidgren.Network;
+using Lidgren.Network;
 using MonomiPark.SlimeRancher.Persist;
 using MonomiPark.SlimeRancher.Regions;
 using SRMultiplayer.Networking;
@@ -91,6 +91,7 @@ namespace SRMultiplayer
         public static void ReturnToMainMenu(string reason)
         {
             Log($"[SRMP] Leaving the session: {reason}");
+            PlayerInventory.Save();
 
             try
             {
@@ -120,6 +121,8 @@ namespace SRMultiplayer
             {
                 SceneManager.LoadScene(2);
             }
+            else if (SceneManager.GetActiveScene().buildIndex == 2)
+                Instance?.OnMainMenuLoaded();
         }
 
         /// <summary>
@@ -196,8 +199,10 @@ namespace SRMultiplayer
         {
             base.OnDestroy();
 
-            NetworkClient.Instance.Shutdown();
-            NetworkServer.Instance.Shutdown();
+            SceneManager.activeSceneChanged -= SceneManager_activeSceneChanged;
+            Application.logMessageReceived -= Application_logMessageReceived;
+            NetworkClient.Instance?.Shutdown();
+            NetworkServer.Instance?.Shutdown();
         }
 
         /// <summary>
@@ -296,6 +301,13 @@ namespace SRMultiplayer
             }
         }
 
+        private void LateUpdate()
+        {
+            // Flush after every actor has updated so same-frame changes share
+            // a few small EOS packets instead of producing one send per actor.
+            ActorPositionBatcher.Flush();
+        }
+
         /// <summary>
         /// Handle scene changed events triggered by the game
         /// </summary>
@@ -318,6 +330,13 @@ namespace SRMultiplayer
             //menuObj.AddComponent<NetworkClientUI>();
 
             //innitialize all necessary global variables
+            Globals.HandlePacket = false;
+            Globals.CurrentGameName = null;
+            Globals.SuggestedNames.Clear();
+            Globals.HostFps = 0;
+            LastServerContact = 0;
+            SmoothedPing = 0;
+            Utils.ActorSequence = 0;
             Globals.LocalID = 0;
             Globals.DisableAchievements = false;
             Globals.GameLoaded = false;
@@ -399,8 +418,11 @@ namespace SRMultiplayer
             }
 
             var splashOnTrigger = GameObject.FindObjectOfType<SplashOnTrigger>();
-            Globals.FXPrefabs.TryAdd(splashOnTrigger.playerSplashFX.name, splashOnTrigger.playerSplashFX);
-            Globals.FXPrefabs.TryAdd(splashOnTrigger.splashFX.name, splashOnTrigger.splashFX);
+            if (splashOnTrigger != null)
+            {
+                if (splashOnTrigger.playerSplashFX != null) Globals.FXPrefabs.TryAdd(splashOnTrigger.playerSplashFX.name, splashOnTrigger.playerSplashFX);
+                if (splashOnTrigger.splashFX != null) Globals.FXPrefabs.TryAdd(splashOnTrigger.splashFX.name, splashOnTrigger.splashFX);
+            }
 
 
             if (Globals.IsClient)
@@ -415,6 +437,9 @@ namespace SRMultiplayer
                         player.Spawn();
                     }
                 }
+                Globals.GameLoaded = true;
+                NoteServerContact();
+                NetworkClient.Instance.DrainPendingMessages();
                 new PacketPlayerLoaded().Send();
                 Log("\"PacketPlayerLoaded\" Has been sent to server successfully!");
             }
@@ -444,9 +469,11 @@ namespace SRMultiplayer
         {
             if(m_LogFileStream == null)
             {
-                string n = string.Format("log-{0:yyyy-MM-dd_hh-mm-ss-tt}.txt", DateTime.Now);
+                string n = string.Format("log-{0:yyyy-MM-dd_HH-mm-ss-fff}-{1}-{2}.txt",
+                    DateTime.UtcNow, Process.GetCurrentProcess().Id, Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(Path.Combine(ModDataPath, "Logs"));
-                m_LogFileStream = File.Create(Path.Combine(ModDataPath, "Logs", n));
+                m_LogFileStream = new FileStream(Path.Combine(ModDataPath, "Logs", n),
+                    FileMode.CreateNew, FileAccess.Write, FileShare.ReadWrite);
                 m_LogWriter = new StreamWriter(m_LogFileStream);
             }
 

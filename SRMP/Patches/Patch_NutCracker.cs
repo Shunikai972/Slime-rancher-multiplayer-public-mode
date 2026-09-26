@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using SRMultiplayer.Networking;
 using SRMultiplayer.Packets;
 using System;
@@ -28,14 +28,18 @@ namespace SRMultiplayer.Patches
     [HarmonyPatch("DoCrack")]
     class Nutcracker_DoCrack
     {
-        static bool Prefix(Nutcracker __instance, GameObject toCrack)
+        static bool Prefix(Nutcracker __instance, GameObject toCrack, ref IEnumerator __result)
         {
             if (!Globals.IsMultiplayer) return true;
 
             var netActor = toCrack.GetComponent<NetworkActor>();
             if (netActor != null && !netActor.IsLocal)
             {
-                __instance.GetComponent<NetworkNutcracker>().Crack(toCrack);
+                // DoCrack returns an IEnumerator. Skipping it without setting
+                // __result passed null to Unity's StartCoroutine.
+                var cracker = __instance.gameObject.GetOrAddComponent<NetworkNutcracker>();
+                cracker.Cracker = __instance;
+                __result = cracker.DoCrack(toCrack);
                 return false;
             }
             return true;

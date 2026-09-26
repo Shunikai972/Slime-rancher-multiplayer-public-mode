@@ -1,7 +1,8 @@
-﻿using Lidgren.Network;
+using Lidgren.Network;
 using MonomiPark.SlimeRancher.DataModel;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Data;
 using System.Linq;
 using System.Text;
@@ -13,6 +14,10 @@ namespace SRMultiplayer.Packets
     [Packet(PacketType.PlayerAnimation)]
     public class PacketPlayerAnimation : Packet
     {
+        // The animator parameter mask is a UInt64. Four layer fields plus one
+        // mask and at most 64 parameter values fit in this protocol bound.
+        public const int MaxDataItems = 69;
+
         public enum AnimationType : int
         {
             Layer,
@@ -73,8 +78,28 @@ namespace SRMultiplayer.Packets
         /// </summary>
         public PacketPlayerAnimation(NetIncomingMessage im) : base(im) { }
 
+        /// <summary>
+        /// The server applies animation locally, and the read methods consume
+        /// internalData. Relay must use an independent queue so remote players
+        /// receive the original packet contents.
+        /// </summary>
+        public PacketPlayerAnimation CopyForRelay()
+        {
+            return new PacketPlayerAnimation
+            {
+                ID = ID,
+                Type = Type,
+                internalData = new Queue<AnimationData>(internalData)
+            };
+        }
+
         public override void Serialize(NetOutgoingMessage om)
         {
+            int minimumCount = Type == (byte)AnimationType.Layer ? 5 : 1;
+            if (Type > (byte)AnimationType.Parameters || internalData == null
+                || internalData.Count < minimumCount || internalData.Count > MaxDataItems)
+                throw new InvalidDataException($"Invalid player animation packet: type={Type}, count={internalData?.Count ?? -1}.");
+
             base.Serialize(om);
 
             om.Write(internalData.Count);
@@ -95,6 +120,8 @@ namespace SRMultiplayer.Packets
                     case 3:
                         om.Write(data.uData.Value);
                         break;
+                    default:
+                        throw new InvalidDataException($"Unknown player animation value type: {data.type}.");
                 }
             }
         }
@@ -105,6 +132,14 @@ namespace SRMultiplayer.Packets
 
             internalData = new Queue<AnimationData>();
             int Count = im.ReadInt32();
+            if (Count < 0 || Count > MaxDataItems)
+                throw new InvalidDataException($"Invalid player animation data count: {Count}.");
+            if (Type > (byte)AnimationType.Parameters)
+                throw new InvalidDataException($"Unknown player animation type: {Type}.");
+            int minimumCount = Type == (byte)AnimationType.Layer ? 5 : 1;
+            if (Count < minimumCount)
+                throw new InvalidDataException($"Incomplete player animation packet: type={Type}, count={Count}.");
+
             for (int i = 0; i < Count; i++)
             {
                 var data = new AnimationData();
@@ -123,6 +158,8 @@ namespace SRMultiplayer.Packets
                     case 3:
                         data.uData = im.ReadUInt64();
                         break;
+                    default:
+                        throw new InvalidDataException($"Unknown player animation value type: {type}.");
                 }
 
                 internalData.Enqueue(data);

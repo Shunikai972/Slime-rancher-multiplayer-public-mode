@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using SRMultiplayer.Networking;
 using SRMultiplayer.Packets;
 using System;
@@ -10,6 +10,37 @@ using UnityEngine;
 
 namespace SRMultiplayer.Patches
 {
+    [HarmonyPatch(typeof(SlimeEat))]
+    [HarmonyPatch("MaybeChomp")]
+    class SlimeEat_MaybeChomp
+    {
+        internal static bool CanSimulate(SlimeEat slime, GameObject food)
+        {
+            if (!Globals.IsMultiplayer) return true;
+            var actor = slime.GetComponent<NetworkActor>();
+            if (actor == null || !actor.IsLocal) return false;
+            var target = food != null ? food.GetComponent<NetworkActor>() : null;
+            if (target == null || target.IsLocal) return true;
+            if (slime.DoesEat(food) && slime.WillNowEat(Identifiable.GetId(food)))
+                target.TakeOwnership(true);
+            return false;
+        }
+
+        static bool Prefix(SlimeEat __instance, GameObject obj) => CanSimulate(__instance, obj);
+    }
+
+    [HarmonyPatch(typeof(SlimeEat), "MaybeSpinAndChomp")]
+    class SlimeEat_MaybeSpinAndChomp
+    {
+        static bool Prefix(SlimeEat __instance, GameObject obj) => SlimeEat_MaybeChomp.CanSimulate(__instance, obj);
+    }
+
+    [HarmonyPatch(typeof(SlimeEat), "FinishChomp")]
+    class SlimeEat_FinishChomp
+    {
+        static bool Prefix(SlimeEat __instance, GameObject chomping) => SlimeEat_MaybeChomp.CanSimulate(__instance, chomping);
+    }
+
     [HarmonyPatch(typeof(SlimeEat))]
     [HarmonyPatch("Produce")]
     class SlimeEat_Produce

@@ -9,6 +9,27 @@ using UnityEngine;
 
 namespace SRMultiplayer.Patches
 {
+    /// <summary>
+    /// Unity's global consumable search can retain a GameObject reference after
+    /// the native object has been destroyed. Identifiable.IsEdible immediately
+    /// calls GetComponent on that stale reference, throwing from every slime
+    /// that evaluates StalkConsumable/GatherIdentifiableItems until the cache
+    /// is rebuilt. Unity's overloaded null check also catches destroyed objects.
+    /// </summary>
+    [HarmonyPatch(typeof(Identifiable), "IsEdible", new Type[] { typeof(GameObject) })]
+    class Identifiable_IsEdible
+    {
+        static bool Prefix(GameObject gameObject, ref bool __result)
+        {
+            if (gameObject != null) return true;
+
+            // A stale entry is simply not edible. Let the caller continue its
+            // search instead of raising/logging an exception on every physics tick.
+            __result = false;
+            return false;
+        }
+    }
+
     [HarmonyPatch(typeof(Identifiable))]
     [HarmonyPatch("OnDestroy")]
     class Identifiable_OnDestroy

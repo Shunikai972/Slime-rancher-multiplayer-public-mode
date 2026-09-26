@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using MonomiPark.SlimeRancher.DataModel;
 using SRMultiplayer.Networking;
 using SRMultiplayer.Packets;
@@ -16,7 +16,7 @@ namespace SRMultiplayer.Patches
     {
         static void Prefix(DroneSubbehaviourRest __instance)
         {
-            if (!Globals.IsMultiplayer || Globals.HandlePacket) return;
+            if (!Globals.IsMultiplayer || Globals.HandlePacket || __instance.drone.GetComponent<NetworkDrone>()?.IsLocal != true) return;
 
             new PacketDroneActive()
             {
@@ -32,7 +32,7 @@ namespace SRMultiplayer.Patches
     {
         static void Postfix(DroneSubbehaviourRest __instance, ref bool __result)
         {
-            if (!Globals.IsMultiplayer || Globals.HandlePacket) return;
+            if (!Globals.IsMultiplayer || Globals.HandlePacket || __instance.drone.GetComponent<NetworkDrone>()?.IsLocal != true) return;
 
             if (__result)
             {

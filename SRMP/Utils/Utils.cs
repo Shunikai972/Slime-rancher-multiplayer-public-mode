@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -11,6 +11,41 @@ namespace SRMultiplayer
 {
     public static class Utils
     {
+        internal static void LoadUserData()
+        {
+            string path = Path.Combine(SRMP.ModDataPath, "userdata.json");
+            var data = new UserData { CheckDLC = true, IgnoredMods = new List<string>() };
+            bool save = !File.Exists(path);
+            if (!save)
+            {
+                try
+                {
+                    var json = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(path));
+                    data = json.ToObject<UserData>();
+                    if (json["CheckDLC"] == null) { data.CheckDLC = true; save = true; }
+                }
+                catch (Newtonsoft.Json.JsonException ex)
+                {
+                    // Keep the damaged input for diagnosis; never silently erase it.
+                    File.Copy(path, path + ".invalid-" + Guid.NewGuid().ToString("N"));
+                    SRMP.Log($"[Config] Invalid userdata preserved: {ex.Message}");
+                    string backup = path + ".bak";
+                    if (File.Exists(backup))
+                    {
+                        try { data = Newtonsoft.Json.JsonConvert.DeserializeObject<UserData>(File.ReadAllText(backup)); }
+                        catch (Newtonsoft.Json.JsonException backupError)
+                        { SRMP.Log($"[Config] Backup could not be read: {backupError.Message}"); }
+                    }
+                    save = true;
+                }
+            }
+            if (data.UUID == Guid.Empty) { data.UUID = Guid.NewGuid(); save = true; }
+            if (data.IgnoredMods == null) { data.IgnoredMods = new List<string>(); save = true; }
+            Globals.UserData = data;
+            if (save) AtomicFile.WriteText(path, Newtonsoft.Json.JsonConvert.SerializeObject(data));
+            SRMP.Log("Loaded userdata with UUID " + data.UUID);
+        }
+
         /// <summary>
         /// Loads up any resources embedded in the mod
         /// </summary>
@@ -53,19 +88,15 @@ namespace SRMultiplayer
             return Mathf.Abs(value1 - value2) <= acceptableDifference;
         }
 
-        private static System.Random m_Random = new System.Random();
+        internal static int ActorSequence;
 
-        /// <summary>
-        /// Gets a new random actor id for netowork actors 
-        /// </summary>
-        /// <returns>Random integer between in Min and int max that is not in the current sessions of NetworkActors</returns>
         public static int GetRandomActorID()
         {
-            int id = m_Random.Next(int.MinValue, int.MaxValue);
-            while (Globals.Actors.ContainsKey(id))
-            {
-                id = m_Random.Next(int.MinValue, int.MaxValue);
-            }
+            // The host supplies the cursor at authentication when a player id
+            // is reused; peers allocate disjoint namespaces without collisions.
+            int id;
+            do { id = Networking.NetworkIdentity.ForActor(Globals.LocalID, ++ActorSequence); }
+            while (Globals.Actors.ContainsKey(id));
             return id;
         }
 

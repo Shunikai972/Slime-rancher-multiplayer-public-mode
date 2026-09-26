@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using SRMultiplayer.Networking;
 using SRMultiplayer.Packets;
 using System;
@@ -79,7 +79,8 @@ namespace SRMultiplayer.Patches
             new PacketPlayerCurrency()
             {
                 Total = Math.Max(0, __instance.GetCurrency()),
-                Adjust = -adjust
+                Adjust = -adjust,
+                Origin = Globals.LocalID
             }.Send();
         }
     }
@@ -96,7 +97,8 @@ namespace SRMultiplayer.Patches
             {
                 Total = Math.Max(0, __instance.GetCurrency()),
                 Adjust = adjust,
-                Type = (byte)coinsType
+                Type = (byte)coinsType,
+                Origin = Globals.LocalID
             }.Send();
         }
     }
@@ -140,34 +142,25 @@ namespace SRMultiplayer.Patches
         {
             var codes = new List<CodeInstruction>(instructions);
 
-            int foundAt = -1;
-            for (int i = 0; i < codes.Count; i++)
+            var add = AccessTools.Method(typeof(List<PlayerState.Upgrade>), "Add");
+            var replacement = AccessTools.Method(typeof(PlayerState_Update), "Transpiler_Execute");
+            foreach (var code in codes)
             {
-                if (codes[i].opcode == OpCodes.Brtrue_S)
+                if (code.Calls(add))
                 {
-                    for (int j = 0; j < 10; j++)
-                    {
-                        if (codes[i + j].opcode == OpCodes.Callvirt && codes[i + j].operand?.ToString() == "Void Add(Upgrade)")
-                        {
-                            foundAt = i + j;
-                            break;
-                        }
-                    }
+                    // Keep labels/exception blocks and consume both original
+                    // stack arguments (list receiver + upgrade value).
+                    code.opcode = OpCodes.Call;
+                    code.operand = replacement;
                 }
-                if (foundAt >= 0) break;
-            }
-
-            if (foundAt >= 0)
-            {
-                codes[foundAt] = new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(PlayerState_Update), "Transpiler_Execute"));
             }
 
             return codes.AsEnumerable();
         }
 
-        static void Transpiler_Execute(PlayerState.Upgrade upgrade)
+        static void Transpiler_Execute(List<PlayerState.Upgrade> upgrades, PlayerState.Upgrade upgrade)
         {
-            SRSingleton<SceneContext>.Instance.PlayerState.model.availUpgrades.Add(upgrade);
+            upgrades.Add(upgrade);
 
             if (!Globals.IsMultiplayer || Globals.HandlePacket) return;
 

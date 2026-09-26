@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using MonomiPark.SlimeRancher.DataModel;
 using SRMultiplayer;
 using SRMultiplayer.Networking;
@@ -29,6 +29,10 @@ namespace SRMultiplayer.Patches
                     Slot = __instance.selectedAmmoIdx,
                     Count = amount
                 }.Send();
+            }
+            else if (__instance is NetworkDroneAmmo drone)
+            {
+                new PacketDroneAmmoRemove { ID = drone.Drone.droneModel.siteId, Count = amount }.Send();
             }
             else if(__instance is NetworkPlayerAmmo)
             {
@@ -135,7 +139,8 @@ namespace SRMultiplayer.Patches
             {
                 new PacketDroneAmmoRemove()
                 {
-                    ID = ((NetworkDroneAmmo)__instance).Drone.droneModel.siteId
+                    ID = ((NetworkDroneAmmo)__instance).Drone.droneModel.siteId,
+                    Count = count
                 }.Send();
             }
             else if (__instance is NetworkPlayerAmmo)
@@ -171,136 +176,47 @@ namespace SRMultiplayer.Patches
                 new PacketDroneAmmoAdd()
                 {
                     ID = ((NetworkDroneAmmo)__instance).Drone.droneModel.siteId,
-                    Ident = (ushort)id
+                    Ident = (ushort)id,
+                    Count = count,
+                    Overflow = overflow
                 }.Send();
             }
         }
     }
 
-    [HarmonyPatch(typeof(Ammo))]
-    [HarmonyPatch("MaybeAddToSlot")]
+    [HarmonyPatch(typeof(Ammo), "MaybeAddToSlot")]
     class Ammo_MaybeAddToSlot
     {
-        static bool Prefix(Ammo __instance, ref bool __result, Identifiable.Id id, Identifiable identifiable)
+        static void Prefix(Ammo __instance, out int[] __state)
         {
-            if (!Globals.IsMultiplayer || Globals.HandlePacket) return true;
+            __state = null;
+            if (!Globals.IsMultiplayer || Globals.HandlePacket ||
+                !(__instance is NetworkAmmo || __instance is NetworkDroneAmmo)) return;
+            __state = __instance.Slots.Select(slot => slot == null ? 0 : slot.count).ToArray();
+        }
 
-            bool flag = id == Identifiable.Id.MAGIC_WATER_LIQUID;
-            if (flag)
+        static void Postfix(Ammo __instance, bool __result, int[] __state)
+        {
+            if (!__result || __state == null || Globals.HandlePacket) return;
+            // Let the game handle predicates, water and emotion averaging.
+            // Observe only the successful change, including DroneAmmo's path.
+            for (int i = 0; i < __state.Length; i++)
             {
-                id = Identifiable.Id.WATER_LIQUID;
+                var slot = __instance.Slots[i];
+                int added = (slot == null ? 0 : slot.count) - __state[i];
+                if (added <= 0) continue;
+                if (__instance is NetworkAmmo silo)
+                    new PacketLandPlotSiloAmmoAdd
+                    {
+                        ID = silo.ID, Type = (byte)silo.Silo.type, Ident = (ushort)slot.id,
+                        Slot = i, Count = added, Emotions = slot.emotions
+                    }.Send();
+                else if (__instance is NetworkDroneAmmo drone)
+                    new PacketDroneAmmoAdd
+                    {
+                        ID = drone.Drone.droneModel.siteId, Ident = (ushort)slot.id, Count = added
+                    }.Send();
             }
-            bool flag2 = false;
-            bool flag3 = false;
-            for (int i = 0; i < __instance.ammoModel.usableSlots; i++)
-            {
-                if (__instance.Slots[i] != null && __instance.Slots[i].id == id)
-                {
-                    int slotMaxCount = __instance.GetSlotMaxCount(id, i);
-                    if (flag)
-                    {
-                        if (__instance is NetworkAmmo)
-                        {
-                            new PacketLandPlotSiloAmmoAdd()
-                            {
-                                ID = ((NetworkAmmo)__instance).ID,
-                                Type = (byte)((NetworkAmmo)__instance).Silo.type,
-                                Ident = (ushort)id,
-                                Slot = i,
-                                Count = slotMaxCount - __instance.Slots[i].count,
-                                Overflow = false,
-                                Emotions = __instance.Slots[i].emotions
-                            }.Send();
-                        }
-                        else if(__instance is NetworkPlayerAmmo)
-                        {
-                            SRMP.Log($"MaybeAddToSlot1 {((NetworkPlayerAmmo)__instance).ID} {id} {i}", "PLAYERAMMO");
-                        }
-
-                        __instance.Slots[i].count = slotMaxCount;
-                        __instance.waterIsMagicUntil = __instance.timeDir.HoursFromNow(0.5f);
-                    }
-                    else if (__instance.Slots[i].count >= slotMaxCount)
-                    {
-                        flag3 = true;
-                    }
-                    else
-                    {
-                        int prev = __instance.Slots[i].count;
-                        __instance.Slots[i].count = Mathf.Min(slotMaxCount, __instance.Slots[i].count + __instance.GetAmountFilledPerVac(id, i));
-                        SlimeEmotions slimeEmotions = (identifiable == null) ? null : identifiable.GetComponent<SlimeEmotions>();
-                        if (slimeEmotions != null)
-                        {
-                            __instance.Slots[i].AverageIn(slimeEmotions);
-                        }
-
-                        if (__instance is NetworkAmmo)
-                        {
-                            new PacketLandPlotSiloAmmoAdd()
-                            {
-                                ID = ((NetworkAmmo)__instance).ID,
-                                Type = (byte)((NetworkAmmo)__instance).Silo.type,
-                                Ident = (ushort)id,
-                                Slot = i,
-                                Count = __instance.Slots[i].count - prev,
-                                Overflow = false,
-                                Emotions = __instance.Slots[i].emotions
-                            }.Send();
-                        }
-                        else if (__instance is NetworkPlayerAmmo)
-                        {
-                            SRMP.Log($"MaybeAddToSlot2 {((NetworkPlayerAmmo)__instance).ID} {id} {i}", "PLAYERAMMO");
-                        }
-                    }
-                    flag2 = true;
-                    break;
-                }
-            }
-            if (!flag2)
-            {
-                int num = 0;
-                while (num < __instance.ammoModel.usableSlots && !flag2)
-                {
-                    if ((__instance.slotPreds[num] == null || __instance.slotPreds[num](id)) && __instance.Slots[num] == null && __instance.potentialAmmo.Contains(id))
-                    {
-                        SlimeEmotions slimeEmotions2 = (identifiable == null) ? null : identifiable.GetComponent<SlimeEmotions>();
-                        if (flag)
-                        {
-                            __instance.Slots[num] = new Ammo.Slot(id, __instance.GetSlotMaxCount(id, num));
-                            __instance.waterIsMagicUntil = __instance.timeDir.HoursFromNow(0.5f);
-                        }
-                        else
-                        {
-                            __instance.Slots[num] = new Ammo.Slot(id, __instance.GetAmountFilledPerVac(id, num));
-                        }
-                        if (slimeEmotions2 != null)
-                        {
-                            __instance.Slots[num].AverageIn(slimeEmotions2);
-                        }
-                        if (__instance is NetworkAmmo)
-                        {
-                            new PacketLandPlotSiloAmmoAdd()
-                            {
-                                ID = ((NetworkAmmo)__instance).ID,
-                                Type = (byte)((NetworkAmmo)__instance).Silo.type,
-                                Ident = (ushort)id,
-                                Slot = num,
-                                Count = __instance.Slots[num].count,
-                                Overflow = false,
-                                Emotions = __instance.Slots[num].emotions
-                            }.Send();
-                        }
-                        else if (__instance is NetworkPlayerAmmo)
-                        {
-                            SRMP.Log($"MaybeAddToSlot3 {((NetworkPlayerAmmo)__instance).ID} {id} {id}", "PLAYERAMMO");
-                        }
-                        flag2 = true;
-                    }
-                    num++;
-                }
-            }
-            __result = flag2 && !flag3;
-            return false;
         }
     }
 }

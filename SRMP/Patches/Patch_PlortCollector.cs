@@ -19,10 +19,48 @@ namespace SRMultiplayer.Patches
                 return Globals.IsServer;
 
             NetworkLandplot netLandplot = collector.model.gameObj.GetComponent<NetworkLandplot>();
-            if (netLandplot == null || netLandplot.Region == null)
+            if (netLandplot == null || netLandplot.Region == null || netLandplot.Region.Owner == 0)
                 return Globals.IsServer;
 
             return netLandplot.IsLocal;
+        }
+
+        public static void StartRequested(PlortCollector collector)
+        {
+            if (collector == null || !IsAuthoritative(collector) || collector.timeDir == null ||
+                collector.joints.Count != 0 || !collector.timeDir.HasReached(collector.forceCollectUntil)) return;
+            bool previous = Globals.HandlePacket;
+            Globals.HandlePacket = false;
+            try { collector.DoCollection(); }
+            finally { Globals.HandlePacket = previous; }
+        }
+    }
+
+    [HarmonyPatch(typeof(PlortCollector), "Update")]
+    class PlortCollector_Update
+    {
+        static bool Prefix(PlortCollector __instance)
+        {
+            // A region handoff must retire the old owner's physical joints.
+            // The original Update still animates the replicated collection time.
+            if (!Globals.IsMultiplayer) return true;
+            if (!PlortCollectorAuthority.IsAuthoritative(__instance))
+            {
+                foreach (var joint in __instance.joints) joint.Destroy();
+                __instance.joints.Clear();
+                return true;
+            }
+            bool ready = true;
+            foreach (var joint in __instance.joints)
+            {
+                var actor = joint.vacuumable != null ? joint.vacuumable.GetComponent<NetworkActor>() : null;
+                if (actor == null || actor.IsLocal) continue;
+                actor.TakeOwnership(true);
+                ready = false;
+            }
+            // A plort already at the collector mouth must not enter storage
+            // before the host acknowledges ownership of the physical actor.
+            return ready;
         }
     }
 
@@ -40,7 +78,7 @@ namespace SRMultiplayer.Patches
 
         static void Postfix(PlortCollector __instance)
         {
-            if (!Globals.IsMultiplayer || !PlortCollectorAuthority.IsAuthoritative(__instance))
+            if (!Globals.IsMultiplayer || Globals.HandlePacket || !PlortCollectorAuthority.IsAuthoritative(__instance))
                 return;
 
             if (__instance == null || __instance.model == null || __instance.model.gameObj == null)
@@ -67,7 +105,7 @@ namespace SRMultiplayer.Patches
         static void Prefix(PlortCollector __instance)
         {
             if (!Globals.IsMultiplayer || Globals.HandlePacket ||
-                !PlortCollectorAuthority.IsAuthoritative(__instance))
+                PlortCollectorAuthority.IsAuthoritative(__instance))
                 return;
 
             if (__instance == null || __instance.model == null || __instance.model.gameObj == null)
@@ -87,31 +125,4 @@ namespace SRMultiplayer.Patches
         }
     }
 
-    /// <summary>
-    /// Network handlers use Globals.HandlePacket as a recursion/suppression
-    /// guard. The original handlers reset it at the bottom of the method, but
-    /// custom-packet early returns and thrown exceptions can bypass that reset.
-    /// Harmony finalizers guarantee the flag is cleared on every exit path.
-    /// </summary>
-    [HarmonyPatch(typeof(NetworkHandlerClient), "HandlePacket")]
-    class NetworkHandlerClient_HandlePacketGuard
-    {
-        [HarmonyFinalizer]
-        static Exception Finalizer(Exception __exception)
-        {
-            Globals.HandlePacket = false;
-            return __exception;
-        }
-    }
-
-    [HarmonyPatch(typeof(NetworkHandlerServer), "HandlePacket")]
-    class NetworkHandlerServer_HandlePacketGuard
-    {
-        [HarmonyFinalizer]
-        static Exception Finalizer(Exception __exception)
-        {
-            Globals.HandlePacket = false;
-            return __exception;
-        }
-    }
 }

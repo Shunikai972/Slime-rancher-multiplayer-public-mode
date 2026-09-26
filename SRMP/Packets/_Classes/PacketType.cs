@@ -1,4 +1,4 @@
-﻿namespace SRMultiplayer.Packets
+namespace SRMultiplayer.Packets
 {
     public enum PacketType : ushort
     {
@@ -132,5 +132,6 @@
         Pong = 118,
         PlayerPings = 119,
         NameSuggestions = 120,
+        ActorPositions = 121,
     }
 }

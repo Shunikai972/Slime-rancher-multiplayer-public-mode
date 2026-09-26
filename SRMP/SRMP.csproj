@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
@@ -74,7 +74,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="0Harmony">
-      <HintPath>.\0Harmony.dll</HintPath>
+      <HintPath>$(NuGetPackageRoot)lib.harmony\2.2.1\lib\net472\0Harmony.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Assembly-CSharp_publicized">
@@ -107,10 +107,7 @@
       <HintPath>.\Unity.TextMeshPro.dll</HintPath>
       <Private>False</Private>
     </Reference>
-    <Reference Include="UnityCoreMod">
-      <HintPath>C:\Program Files (x86)\Steam\steamapps\common\Slime Rancher\SlimeRancher_Data\Managed\UnityCoreMod.dll</HintPath>
-    </Reference>
-    <Reference Include="UnityCoreMod, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+    <Reference Include="UnityCoreMod" Condition="'$(Configuration)' == 'Standalone' Or '$(Configuration)' == 'Standalone NoVer' Or '$(Configuration)' == 'Debug'">
       <SpecificVersion>False</SpecificVersion>
       <HintPath>.\UnityCoreMod.dll</HintPath>
       <Private>False</Private>
@@ -1439,6 +1436,7 @@
     <Compile Include="Packets\Actors\PacketActorDestroy.cs" />
     <Compile Include="Packets\Actors\PacketActorOwner.cs" />
     <Compile Include="Packets\Actors\PacketActorPosition.cs" />
+    <Compile Include="Packets\Actors\PacketActorPositions.cs" />
     <Compile Include="Packets\Actors\PacketActorSpawn.cs" />
     <Compile Include="Packets\FX\PacketGlobalFX.cs" />
     <Compile Include="Packets\FX\PacketIncinerateFX.cs" />
@@ -1568,6 +1566,15 @@
     <Compile Include="Server\BanList.cs" />
     <Compile Include="Server\ServerCommands.cs" />
     <Compile Include="SRMP.cs" />
+    <Compile Include="Networking\PacketFraming.cs" />
+    <Compile Include="Networking\NetworkIdentity.cs" />
+    <Compile Include="Networking\RegionOwnership.cs" />
+    <Compile Include="Networking\NetworkNickname.cs" />
+    <Compile Include="Networking\NetworkDiagnostics.cs" />
+    <Compile Include="Networking\ActorPositionBatcher.cs" />
+    <Compile Include="Networking\PlayerInventory.cs" />
+    <Compile Include="Utils\AtomicFile.cs" />
+    <Compile Include="Utils\ServerCode.cs" />
     <Compile Include="Console\SRMPConsole.cs" />
     <Compile Include="Utils\Compression.cs" />
     <Compile Include="Utils\Extensions.cs" />
@@ -1578,7 +1585,6 @@
   <ItemGroup>
     <Content Include="Console\Console Commands.txt" />
     <EmbeddedResource Include="EOS\Libs\EOSSDK-Win64-Shipping.dll" />
-    <EmbeddedResource Include="EOS\Libs\xaudio2_9redist.dll" />
     <Content Include="modinfo.tt">
       <Generator>TextTemplatingFileGenerator</Generator>
       <LastGenOutput>modinfo.json</LastGenOutput>
@@ -1611,7 +1617,14 @@
       <DependentUpon>modinfo.tt</DependentUpon>
     </EmbeddedResource>
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="Lib.Harmony" Version="2.2.1" PrivateAssets="all" />
+  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <PropertyGroup>
+    <AssemblySearchPaths>$(AssemblySearchPaths);$(GameManagedPath);$(SRMLLibPath)</AssemblySearchPaths>
+  </PropertyGroup>
   <PropertyGroup>
     <PostBuildEvent>
     </PostBuildEvent>

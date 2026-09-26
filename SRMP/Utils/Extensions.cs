@@ -1,4 +1,4 @@
-﻿using Lidgren.Network;
+using Lidgren.Network;
 using SRMultiplayer;
 using SRMultiplayer.Networking;
 using SRMultiplayer.Packets;
@@ -113,20 +113,17 @@ namespace SRMultiplayer
 
         #region Packet Handling Extensions
 
-        public static void Send(this Packet packet, NetDeliveryMethod method = NetDeliveryMethod.Unreliable,
+        public static void Send(this Packet packet, NetDeliveryMethod method = NetDeliveryMethod.ReliableOrdered,
             int sequence = 0)
         {
-            if (!Globals.IsClient)
-            {
+            if (Globals.IsServer)
                 NetworkServer.Instance.SendPacketToAll(packet, null, GetEpicReliability(method));
-                return;
-            }
-
-            NetworkClient.Instance.SendPacket(packet, GetEpicReliability(method));
+            else if (Globals.IsClient)
+                NetworkClient.Instance.SendPacket(packet, GetEpicReliability(method));
         }
 
         public static void Send(this Packet packet, NetworkPlayer player,
-            NetDeliveryMethod method = NetDeliveryMethod.Unreliable, int sequence = 0)
+            NetDeliveryMethod method = NetDeliveryMethod.ReliableOrdered, int sequence = 0)
         {
             if (!Globals.IsServer)
             {
@@ -134,10 +131,11 @@ namespace SRMultiplayer
                 return;
             }
 
-            NetworkServer.Instance.SendPacket(Globals.PlayerToEpic[player.ID], packet, GetEpicReliability(method));
+            if (player != null && !player.IsLocal && Globals.PlayerToEpic.TryGetValue(player.ID, out var peer))
+                NetworkServer.Instance.SendPacket(peer, packet, GetEpicReliability(method));
         }
 
-        public static void SendToAll(this Packet packet, NetDeliveryMethod method = NetDeliveryMethod.Unreliable,
+        public static void SendToAll(this Packet packet, NetDeliveryMethod method = NetDeliveryMethod.ReliableOrdered,
             int sequence = 0)
         {
             if (!Globals.IsServer)
@@ -151,7 +149,7 @@ namespace SRMultiplayer
 
 
         public static void SendToAllExcept(this Packet packet, NetworkPlayer player,
-            NetDeliveryMethod method = NetDeliveryMethod.Unreliable, int sequence = 0)
+            NetDeliveryMethod method = NetDeliveryMethod.ReliableOrdered, int sequence = 0)
         {
             if (!Globals.IsServer)
             {
@@ -159,7 +157,8 @@ namespace SRMultiplayer
                 return;
             }
 
-            NetworkServer.Instance.SendPacketToAll(packet, Globals.PlayerToEpic[player.ID], GetEpicReliability(method));
+            if (player != null && Globals.PlayerToEpic.TryGetValue(player.ID, out var peer))
+                NetworkServer.Instance.SendPacketToAll(packet, peer, GetEpicReliability(method));
         }
 
         #endregion

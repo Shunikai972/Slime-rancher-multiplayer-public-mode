@@ -1,4 +1,4 @@
-﻿#if SRML
+#if SRML
 using Newtonsoft.Json;
 using SRML;
 using SRML.SR;
@@ -42,32 +42,7 @@ namespace SRMultiplayer
 
             SRMP.Log("Loading SRMP SRML Version");
 
-            //create the mod directory in the install folder if needed
-            if (!Directory.Exists(SRMP.ModDataPath))
-            {
-                Directory.CreateDirectory(SRMP.ModDataPath);
-            }
-            //create the user data file if not created yet
-            if (!File.Exists(Path.Combine(SRMP.ModDataPath, "userdata.json")))
-            {
-                Globals.UserData = new UserData()
-                {
-                    UUID = System.Guid.NewGuid(),
-                    CheckDLC = true,
-                    IgnoredMods = new System.Collections.Generic.List<string>()
-                };
-                File.WriteAllText(Path.Combine(SRMP.ModDataPath, "userdata.json"), JsonConvert.SerializeObject(Globals.UserData));
-                SRMP.Log("Created userdata with UUID " + Globals.UserData.UUID);
-            }
-            else //if alreayd created load in the data
-            {
-                Globals.UserData = JsonConvert.DeserializeObject<UserData>(File.ReadAllText(Path.Combine(SRMP.ModDataPath, "userdata.json")));
-                if(Globals.UserData.IgnoredMods == null)
-                {
-                    Globals.UserData.IgnoredMods = new System.Collections.Generic.List<string>();
-                }
-                SRMP.Log("Loaded userdata with UUID " + Globals.UserData.UUID);
-            }
+            Utils.LoadUserData();
 
             m_GameObject = new GameObject("SRMP");
             m_GameObject.AddComponent<SRMP>();

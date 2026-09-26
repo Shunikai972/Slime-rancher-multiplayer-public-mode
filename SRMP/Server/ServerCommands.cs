@@ -17,9 +17,8 @@ namespace SRMultiplayer.Server
     internal static class ServerCommands
     {
         /// <summary>
-        /// Usernames allowed to run privileged commands, alongside the host.
-        /// Populated from the auto-host config; empty for a normal client host,
-        /// where the host is simply whoever is playing.
+        /// Authenticated EOS Product User IDs allowed to run privileged commands,
+        /// alongside the host. Client supplied display names are not identities.
         /// </summary>
         public static readonly HashSet<string> Operators =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -45,6 +44,7 @@ namespace SRMultiplayer.Server
                 switch (command)
                 {
                     case "help": Help(sender); break;
+                    case "id": Id(sender); break;
                     case "tps": Tps(sender); break;
                     case "ping": Ping(sender); break;
                     case "list": case "players": ListPlayers(sender); break;
@@ -69,9 +69,25 @@ namespace SRMultiplayer.Server
 
         private static bool IsOperator(NetworkPlayer player)
         {
-            //the host is always an operator; on a headless server nobody is
-            //sitting at it, so the configured list is how anyone gets authority
-            return player.IsLocal || Operators.Contains(player.Username ?? "");
+            if (player.IsLocal) return true;
+
+            //Username is part of the client handshake and can be chosen freely.
+            //Use the EOS identity attached to the authenticated P2P connection.
+            return Globals.PlayerToEpic.TryGetValue(player.ID, out var productUserId)
+                && productUserId != null
+                && Operators.Contains(productUserId.ToString());
+        }
+
+        private static void Id(NetworkPlayer sender)
+        {
+            if (!Globals.PlayerToEpic.TryGetValue(sender.ID, out var productUserId)
+                || productUserId == null)
+            {
+                Reply(sender, "Your authenticated EOS identity is unavailable.");
+                return;
+            }
+
+            Reply(sender, "Your EOS Product User ID: " + productUserId);
         }
 
         /// <summary>Sends a line back to one player only.</summary>
@@ -92,7 +108,7 @@ namespace SRMultiplayer.Server
 
         private static void Help(NetworkPlayer sender)
         {
-            Reply(sender, "Commands: /help /tps /ping /list /home");
+            Reply(sender, "Commands: /help /id /tps /ping /list /home");
             if (IsOperator(sender))
             {
                 Reply(sender, "Operator: /tp <player> [destination|home]");

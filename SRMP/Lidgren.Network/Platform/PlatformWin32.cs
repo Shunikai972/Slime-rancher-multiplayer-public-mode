@@ -1,4 +1,4 @@
-﻿#if !__ANDROID__ && !__CONSTRAINED__ && !WINDOWS_RUNTIME && !UNITY_STANDALONE_LINUX
+#if !__ANDROID__ && !__CONSTRAINED__ && !WINDOWS_RUNTIME && !UNITY_STANDALONE_LINUX
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -14,7 +14,6 @@ namespace Lidgren.Network
 		private static readonly long s_timeInitialized = Stopwatch.GetTimestamp();
 		private static readonly double s_dInvFreq = 1.0 / (double)Stopwatch.Frequency;
 		
-		[CLSCompliant(false)]
 		public static ulong GetPlatformSeed(int seedInc)
 		{
 			ulong seed = (ulong)System.Diagnostics.Stopwatch.GetTimestamp();

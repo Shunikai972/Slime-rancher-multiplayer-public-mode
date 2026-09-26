@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections;
 using System;
 
@@ -14,8 +14,11 @@ namespace SRMultiplayer.Networking
             StartCoroutine(DoCrack(toCrack));
         }
 
-        private IEnumerator DoCrack(GameObject toCrack)
+        internal IEnumerator DoCrack(GameObject toCrack)
         {
+            if (toCrack == null || Cracker == null) yield break;
+            Vector3 position = toCrack.transform.position;
+            Quaternion rotation = toCrack.transform.rotation;
             toCrack.GetComponent<Rigidbody>().isKinematic = true;
             toCrack.GetComponent<Collider>().enabled = false;
             Renderer[] componentsInChildren = toCrack.GetComponentsInChildren<Renderer>();
@@ -29,9 +32,9 @@ namespace SRMultiplayer.Networking
                 SECTR_AudioSystem.Play(Cracker.crackCue, Cracker.transform.position, false);
             }
             yield return new WaitForSeconds(3f);
-            if (Cracker.crackFX != null)
+            if (Cracker != null && Cracker.crackFX != null)
             {
-                SRBehaviour.SpawnAndPlayFX(Cracker.crackFX, toCrack.transform.position, toCrack.transform.rotation);
+                SRBehaviour.SpawnAndPlayFX(Cracker.crackFX, position, rotation);
             }
         }
     }

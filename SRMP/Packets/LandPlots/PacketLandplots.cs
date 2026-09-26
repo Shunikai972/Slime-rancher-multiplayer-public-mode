@@ -1,4 +1,4 @@
-﻿using Lidgren.Network;
+using Lidgren.Network;
 using MonomiPark.SlimeRancher.DataModel;
 using System;
 using System.Collections.Generic;
@@ -137,7 +137,7 @@ namespace SRMultiplayer.Packets
                                 ammoModel.slots[k].emotions = new SlimeEmotionData();
                                 for (int l = 0; l < emotionCount; l++)
                                 {
-                                    ammoModel.slots[l].emotions.Add((SlimeEmotions.Emotion)im.ReadByte(), im.ReadFloat());
+                                    ammoModel.slots[k].emotions.Add((SlimeEmotions.Emotion)im.ReadByte(), im.ReadFloat());
                                 }
                             }
                         }

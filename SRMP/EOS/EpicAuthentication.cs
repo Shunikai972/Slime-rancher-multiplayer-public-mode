@@ -1,4 +1,4 @@
-﻿using Epic.OnlineServices;
+using Epic.OnlineServices;
 using Epic.OnlineServices.Connect;
 using Epic.OnlineServices.Platform;
 using System;
@@ -14,6 +14,7 @@ namespace SRMultiplayer.EpicSDK
         private ConnectInterface connectInterface;
         private ulong? connectNotifyLoginStatusChangedId;
         private ulong? connectNotifyAuthExpirationId;
+        private bool loginPending;
 
         public bool DeviceCreated { get; private set; }
         public bool IsLoggedIn { get; private set; }
@@ -40,13 +41,19 @@ namespace SRMultiplayer.EpicSDK
                 SRMultiplayer.SRMP.Log($"Cannot Login while no device was created");
                 return;
             }
-            if(IsLoggedIn)
+            if (IsLoggedIn)
             {
                 SRMultiplayer.SRMP.Log($"Already logged in");
                 return;
             }
+            if (loginPending)
+            {
+                SRMultiplayer.SRMP.Log("EOS login is already in progress; ignoring a duplicate request.");
+                return;
+            }
 
             Username = username;
+            loginPending = true;
 
             var connectLoginOptions = new Epic.OnlineServices.Connect.LoginOptions()
             {
@@ -61,7 +68,7 @@ namespace SRMultiplayer.EpicSDK
                 }
             };
 
-            connectInterface.Login(ref connectLoginOptions, null, OnConnectLogin);
+            connectInterface.Login(ref connectLoginOptions, this, OnConnectLogin);
         }
 
         public void Logout()
@@ -79,11 +86,27 @@ namespace SRMultiplayer.EpicSDK
             connectInterface.Logout(ref logoutOptions, null, OnLogout);
         }
 
+        internal void ReauthenticateAfterInvalidP2PIdentity()
+        {
+            if (!DeviceCreated)
+            {
+                SRMultiplayer.SRMP.Log("[EOS] Cannot reauthenticate because the local Device ID is not ready.");
+                return;
+            }
+            SRMultiplayer.SRMP.Log("[EOS] Local P2P identity was rejected; clearing it and requesting a fresh Connect login.");
+            IsLoggedIn = false;
+            ProductUserId = null;
+            if (loginPending) return;
+            loginPending = false;
+            Login(Username);
+        }
+
         private void OnLogout(ref LogoutCallbackInfo data)
         {
             if (data.ResultCode == Result.Success)
             {
                 IsLoggedIn = false;
+                ProductUserId = null;
             }
             else if (Common.IsOperationComplete(data.ResultCode))
             {
@@ -107,10 +130,12 @@ namespace SRMultiplayer.EpicSDK
 
         private void OnConnectLogin(ref Epic.OnlineServices.Connect.LoginCallbackInfo loginCallbackInfo)
         {
+            if (!ReferenceEquals(loginCallbackInfo.ClientData, this)) return;
             SRMultiplayer.SRMP.Log($"{loginCallbackInfo.ResultCode} {loginCallbackInfo.LocalUserId}");
 
             if (loginCallbackInfo.ResultCode == Result.Success)
             {
+                loginPending = false;
                 ProductUserId = loginCallbackInfo.LocalUserId;
 
                 if (!connectNotifyLoginStatusChangedId.HasValue)
@@ -142,16 +167,18 @@ namespace SRMultiplayer.EpicSDK
                     ContinuanceToken = loginCallbackInfo.ContinuanceToken
                 };
 
-                connectInterface.CreateUser(ref createUserOptions, null, OnCreateUser);
+                connectInterface.CreateUser(ref createUserOptions, this, OnCreateUser);
             }
             else if (Common.IsOperationComplete(loginCallbackInfo.ResultCode))
             {
+                loginPending = false;
                 SRMultiplayer.SRMP.Log($"Result -> {loginCallbackInfo.ResultCode}");
             }
         }
 
         private void OnConnectAuthExpiration(ref AuthExpirationCallbackInfo authExpirationCallbackInfo)
         {
+            if (ProductUserId == null || authExpirationCallbackInfo.LocalUserId != ProductUserId) return;
             IsLoggedIn = false;
 
             Login(Username);
@@ -173,15 +200,19 @@ namespace SRMultiplayer.EpicSDK
 
                     if (connectNotifyAuthExpirationId.HasValue)
                     {
-                        connectInterface.RemoveNotifyLoginStatusChanged(connectNotifyAuthExpirationId.Value);
+                        connectInterface.RemoveNotifyAuthExpiration(connectNotifyAuthExpirationId.Value);
                         connectNotifyAuthExpirationId = null;
                     }
+
+                    ProductUserId = null;
                 }
             }
         }
 
         private void OnCreateUser(ref CreateUserCallbackInfo createUserCallbackInfo)
         {
+            if (!ReferenceEquals(createUserCallbackInfo.ClientData, this)) return;
+            loginPending = false;
             SRMultiplayer.SRMP.Log($"{createUserCallbackInfo.ResultCode} {createUserCallbackInfo.LocalUserId}");
 
             if (createUserCallbackInfo.ResultCode == Result.Success)

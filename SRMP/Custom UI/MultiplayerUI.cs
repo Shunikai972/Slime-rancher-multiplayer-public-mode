@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections;
 using SRMultiplayer;
 using UnityEngine.SceneManagement;
@@ -442,6 +442,19 @@ public class MultiplayerUI : SRSingleton<MultiplayerUI>
     private void ConnectGUI()
     {
         GUILayout.Label("Username: " + Globals.Username);
+        if (error != ConnectError.None)
+        {
+            string message = !string.IsNullOrEmpty(errorMessage)
+                ? errorMessage
+                : error == ConnectError.Kicked ? "You were removed from the server." : "The connection could not be completed.";
+            GUILayout.Label(message);
+            if (GUILayout.Button("Dismiss"))
+            {
+                error = ConnectError.None;
+                errorMessage = null;
+            }
+            GUILayout.Space(8);
+        }
         if (GUILayout.Button("Change Username"))
         {
             Globals.Username = "";
@@ -458,14 +471,21 @@ public class MultiplayerUI : SRSingleton<MultiplayerUI>
 
         GUILayout.Label("Join with server code:");
         GUILayout.BeginHorizontal();
-        servercode = GUILayout.TextField(servercode, 7, GUILayout.Width(120));
-        servercode = servercode.Replace(" ", "").ToUpper();
+        servercode = GUILayout.TextField(servercode, ServerCode.Length, GUILayout.Width(170));
+        servercode = ServerCode.Normalize(servercode);
+        bool previousGuiEnabled = GUI.enabled;
+        GUI.enabled = previousGuiEnabled && ServerCode.IsValid(servercode);
         if (GUILayout.Button("Join"))
         {
+            error = ConnectError.None;
+            errorMessage = null;
             lastCodeUse = 5;
             EpicApplication.Instance.Lobby.JoinLobby(servercode);
         }
+        GUI.enabled = previousGuiEnabled;
         GUILayout.EndHorizontal();
+        if (!ServerCode.IsValid(servercode))
+            GUILayout.Label("Enter the full 7-character code.");
     }
 
     /// <summary>

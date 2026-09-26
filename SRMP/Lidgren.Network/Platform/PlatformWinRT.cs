@@ -1,4 +1,4 @@
-﻿#if WINDOWS_RUNTIME
+#if WINDOWS_RUNTIME
 //
 //
 //
@@ -44,7 +44,6 @@ namespace Lidgren.Network
 
 	public static partial class NetUtility
 	{
-		[CLSCompliant(false)]
 		public static ulong GetPlatformSeed(int seedInc)
 		{
 			ulong seed = (ulong)Environment.TickCount + (ulong)seedInc;

@@ -1,10 +1,9 @@
-﻿using Epic.OnlineServices;
+using Epic.OnlineServices;
 using Epic.OnlineServices.Connect;
 using Epic.OnlineServices.IntegratedPlatform;
 using Epic.OnlineServices.Logging;
 using Epic.OnlineServices.P2P;
 using Epic.OnlineServices.Platform;
-using Epic.OnlineServices.RTCAudio;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -30,6 +29,7 @@ namespace SRMultiplayer.EpicSDK
         private static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
 
         private PlatformInterface epicPlatformInterface;
+        private bool platformInitialized;
         
         public EpicAuthentication Authentication { get; private set; }
         public EpicMetrics Metrics { get; private set; }
@@ -62,22 +62,48 @@ namespace SRMultiplayer.EpicSDK
 
         internal void Shutdown()
         {
-            if(Lobby.IsInLobby)
+            var lobby = Lobby;
+            if (lobby != null && lobby.IsInLobby)
             {
-                if(Lobby.IsLobbyOwner)
+                try
                 {
-                    Lobby.DestroyLobby();
+                    if (lobby.IsLobbyOwner)
+                    {
+                        lobby.DestroyLobby();
+                    }
+                    else
+                    {
+                        lobby.LeaveLobby();
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    Lobby.LeaveLobby();
+                    SRMP.Log("[EOS] Could not close lobby during application shutdown: " + ex);
                 }
             }
 
-            epicPlatformInterface?.Release();
+            try
+            {
+                epicPlatformInterface?.Release();
+            }
+            catch (Exception ex)
+            {
+                SRMP.Log("[EOS] Could not release platform interface: " + ex);
+            }
             epicPlatformInterface = null;
 
-            PlatformInterface.Shutdown();
+            if (platformInitialized)
+            {
+                platformInitialized = false;
+                try
+                {
+                    PlatformInterface.Shutdown();
+                }
+                catch (Exception ex)
+                {
+                    SRMP.Log("[EOS] Could not shut down platform: " + ex);
+                }
+            }
         }
         public static byte[] ExtractResource(String filename)
         {
@@ -97,14 +123,9 @@ namespace SRMultiplayer.EpicSDK
                 Directory.CreateDirectory(Path.Combine(Application.dataPath, "SRMP Libs"));
             }
             var eosSdkPath = Path.Combine(Application.dataPath, "SRMP Libs", "EOSSDK-Win64-Shipping.dll");
-            var eosAudioPath = Path.Combine(Application.dataPath, "SRMP Libs", "xaudio2_9redist.dll");
             if (!File.Exists(eosSdkPath))
             {
                 File.WriteAllBytes(eosSdkPath, ExtractResource("SRMultiplayer.EOS.Libs.EOSSDK-Win64-Shipping.dll"));
-            }
-            if (!File.Exists(eosAudioPath))
-            {
-                File.WriteAllBytes(eosAudioPath, ExtractResource("SRMultiplayer.EOS.Libs.xaudio2_9redist.dll"));
             }
 
             var libraryPointer = LoadLibrary(eosSdkPath);
@@ -124,6 +145,14 @@ namespace SRMultiplayer.EpicSDK
 
             Result initializeResult = PlatformInterface.Initialize(ref initializeOptions);
             SRMultiplayer.SRMP.Log(initializeResult.ToString());
+            if (initializeResult != Result.Success && initializeResult != Result.AlreadyConfigured)
+            {
+                SRMultiplayer.SRMP.Log("[EOS] Platform initialization failed; skipping platform creation");
+                return null;
+            }
+            //If another EOS integration initialized the global SDK first, we
+            //can still create this platform but must not shut its SDK down.
+            platformInitialized = initializeResult == Result.Success;
 
             LoggingInterface.SetLogLevel(LogCategory.AllCategories, LogLevel.Warning);
             LoggingInterface.SetCallback((ref LogMessage message) => SRMultiplayer.SRMP.Log(message.Message));
@@ -140,15 +169,7 @@ namespace SRMultiplayer.EpicSDK
                 },
                 DeploymentId = "cf520e9a63fa463bb44b862586c129b2",
                 Flags = platformFlags,
-                IsServer = false,
-                RTCOptions = new WindowsRTCOptions()
-                {
-                    BackgroundMode = RTCBackgroundMode.KeepRoomsAlive,
-                    PlatformSpecificOptions = new WindowsRTCOptionsPlatformSpecificOptions()
-                    {
-                        XAudio29DllPath = eosAudioPath
-                    }
-                }
+                IsServer = false
             };
 
             PlatformInterface platformInterface = PlatformInterface.Create(ref options);

@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using MonomiPark.SlimeRancher.Regions;
 using SRMultiplayer.Networking;
 using SRMultiplayer.Packets;
@@ -17,7 +17,7 @@ namespace SRMultiplayer.Patches
     {
         static void Postfix(Region __instance)
         {
-            if (!Globals.IsMultiplayer) return;
+            if (!Globals.IsMultiplayer || Globals.HandlePacket || !Globals.GameLoaded) return;
 
             var netRegion = __instance.GetComponent<NetworkRegion>();
             if (Globals.IsClient)
@@ -46,7 +46,7 @@ namespace SRMultiplayer.Patches
         static void Postfix(Region __instance)
         {
             var netRegion = __instance.gameObject.AddComponent<NetworkRegion>();
-            netRegion.ID = __instance.gameObject.GetGameObjectPath().GetHashCode();
+            netRegion.ID = NetworkIdentity.ForScenePath(__instance.gameObject.GetGameObjectPath());
             netRegion.Region = __instance;
             netRegion.FastForwarder = __instance.gameObject.GetComponent<RanchCellFastForwarder>();
 
@@ -120,7 +120,7 @@ namespace SRMultiplayer.Patches
             foreach (var spawner in __instance.gameObject.GetComponentsInChildren<DirectedActorSpawner>(true))
             {
                 var netSpawner = spawner.gameObject.GetOrAddComponent<NetworkDirectedActorSpawner>();
-                netSpawner.ID = spawner.gameObject.GetGameObjectPath().GetHashCode();
+                netSpawner.ID = NetworkIdentity.ForScenePath(spawner.gameObject.GetGameObjectPath());
                 netSpawner.Spawner = spawner;
                 netSpawner.Region = netRegion;
 
@@ -130,7 +130,7 @@ namespace SRMultiplayer.Patches
             foreach (var exchangeAcceptor in __instance.gameObject.GetComponentsInChildren<ExchangeAcceptor>(true))
             {
                 var netAcceptor = exchangeAcceptor.gameObject.GetOrAddComponent<NetworkExchangeAcceptor>();
-                netAcceptor.ID = exchangeAcceptor.gameObject.GetGameObjectPath().GetHashCode();
+                netAcceptor.ID = NetworkIdentity.ForScenePath(exchangeAcceptor.gameObject.GetGameObjectPath());
                 netAcceptor.Acceptor = exchangeAcceptor;
                 netAcceptor.Region = netRegion;
 
@@ -140,7 +140,7 @@ namespace SRMultiplayer.Patches
             foreach (var fireColumn in __instance.gameObject.GetComponentsInChildren<FireColumn>(true))
             {
                 var netColumn = fireColumn.gameObject.GetOrAddComponent<NetworkFireColumn>();
-                netColumn.ID = fireColumn.gameObject.GetGameObjectPath().GetHashCode();
+                netColumn.ID = NetworkIdentity.ForScenePath(fireColumn.gameObject.GetGameObjectPath());
                 netColumn.Column = fireColumn;
                 netColumn.Region = netRegion;
 
@@ -150,7 +150,7 @@ namespace SRMultiplayer.Patches
             foreach (var kookadobaPatchNode in __instance.gameObject.GetComponentsInChildren<KookadobaPatchNode>(true))
             {
                 var netNode = kookadobaPatchNode.gameObject.GetOrAddComponent<NetworkKookadobaPatchNode>();
-                netNode.ID = kookadobaPatchNode.gameObject.GetGameObjectPath().GetHashCode();
+                netNode.ID = NetworkIdentity.ForScenePath(kookadobaPatchNode.gameObject.GetGameObjectPath());
                 netNode.Node = kookadobaPatchNode;
                 netNode.Region = netRegion;
 
@@ -160,7 +160,7 @@ namespace SRMultiplayer.Patches
             foreach (var nutcracker in __instance.gameObject.GetComponentsInChildren<Nutcracker>(true))
             {
                 var netCracker = nutcracker.gameObject.GetOrAddComponent<NetworkNutcracker>();
-                netCracker.ID = nutcracker.gameObject.GetGameObjectPath().GetHashCode();
+                netCracker.ID = NetworkIdentity.ForScenePath(nutcracker.gameObject.GetGameObjectPath());
                 netCracker.Cracker = nutcracker;
 
                 Globals.Nutcrackers.Add(netCracker.ID, netCracker);
@@ -169,7 +169,7 @@ namespace SRMultiplayer.Patches
             foreach (var trigger in __instance.gameObject.GetComponentsInChildren<QuicksilverAmmoReplacer>(true))
             {
                 var netTrigger = trigger.gameObject.GetOrAddComponent<NetworkRaceTrigger>();
-                netTrigger.ID = trigger.gameObject.GetGameObjectPath().GetHashCode();
+                netTrigger.ID = NetworkIdentity.ForScenePath(trigger.gameObject.GetGameObjectPath());
                 netTrigger.Ammo = trigger;
 
                 Globals.RaceTriggers.Add(netTrigger.ID, netTrigger);
@@ -178,7 +178,7 @@ namespace SRMultiplayer.Patches
             foreach (var trigger in __instance.gameObject.GetComponentsInChildren<QuicksilverEnergyCheckpoint>(true))
             {
                 var netTrigger = trigger.gameObject.GetOrAddComponent<NetworkRaceTrigger>();
-                netTrigger.ID = trigger.gameObject.GetGameObjectPath().GetHashCode();
+                netTrigger.ID = NetworkIdentity.ForScenePath(trigger.gameObject.GetGameObjectPath());
                 netTrigger.Checkpoint = trigger;
 
                 Globals.RaceTriggers.Add(netTrigger.ID, netTrigger);
@@ -187,7 +187,7 @@ namespace SRMultiplayer.Patches
             foreach (var trigger in __instance.gameObject.GetComponentsInChildren<QuicksilverEnergyReplacer>(true))
             {
                 var netTrigger = trigger.gameObject.GetOrAddComponent<NetworkRaceTrigger>();
-                netTrigger.ID = trigger.gameObject.GetGameObjectPath().GetHashCode();
+                netTrigger.ID = NetworkIdentity.ForScenePath(trigger.gameObject.GetGameObjectPath());
                 netTrigger.Energy = trigger;
 
                 Globals.RaceTriggers.Add(netTrigger.ID, netTrigger);
@@ -196,7 +196,7 @@ namespace SRMultiplayer.Patches
             foreach (var spawnResource in __instance.gameObject.GetComponentsInChildren<SpawnResource>(true))
             {
                 var netSpawnResource = spawnResource.gameObject.GetOrAddComponent<NetworkSpawnResource>();
-                netSpawnResource.ID = spawnResource.gameObject.GetGameObjectPath().GetHashCode();
+                netSpawnResource.ID = NetworkIdentity.ForScenePath(spawnResource.gameObject.GetGameObjectPath());
                 netSpawnResource.SpawnResource = spawnResource;
                 netSpawnResource.Region = netRegion;
                 netSpawnResource.LandPlot = spawnResource.GetComponentInParent<NetworkLandplot>(true);
@@ -215,7 +215,7 @@ namespace SRMultiplayer.Patches
     {
         static void Postfix(Region __instance)
         {
-            if (!Globals.IsMultiplayer) return;
+            if (!Globals.IsMultiplayer || Globals.HandlePacket || !Globals.GameLoaded) return;
 
             var netRegion = __instance.GetComponent<NetworkRegion>();
             if (Globals.IsClient)

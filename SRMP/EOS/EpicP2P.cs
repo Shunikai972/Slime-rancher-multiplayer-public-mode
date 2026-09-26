@@ -1,4 +1,4 @@
-﻿using Epic.OnlineServices;
+using Epic.OnlineServices;
 using Epic.OnlineServices.P2P;
 using System;
 using System.Collections.Generic;
@@ -8,18 +8,19 @@ using System.Threading.Tasks;
 using Lidgren.Network;
 using SRMultiplayer.EpicSDK;
 using SRMultiplayer.Packets;
+using SRMultiplayer.Networking;
+using UnityEngine;
 
 namespace SRMultiplayer.EpicSDK
 {
     public abstract class EpicP2P
     {
-        internal class IncompletePacket
-        {
-            public byte[][] fragments;
-            public byte fragIndex;
-            public byte fragTotal;
-        }
-        internal Dictionary<PacketType, IncompletePacket> incompletePackets = new Dictionary<PacketType, IncompletePacket>();
+        private readonly Dictionary<ProductUserId, PacketReassembler> reassemblers = new Dictionary<ProductUserId, PacketReassembler>();
+        private uint nextMessageId;
+        private bool active;
+        private bool localIdentityFailureQueued;
+        private const int MaxPacketsPerTick = 512;
+        private const float ReceiveBudgetSeconds = 0.003f;
         
         private static SocketId SRMP_SOCKETID = new SocketId { SocketName = "SRMP" };
 
@@ -32,7 +33,7 @@ namespace SRMultiplayer.EpicSDK
         private ulong? notifyPeerConnectionEstablishedHandle;
         private ulong? notifyPeerConnectionInterruptedHandle;
 
-        private List<Action> queuedActions = new List<Action>();
+        private Queue<Action> queuedActions = new Queue<Action>();
 
         public EpicP2P(P2PInterface p2PInterface, bool isServer)
         {
@@ -42,22 +43,23 @@ namespace SRMultiplayer.EpicSDK
 
         public void Tick()
         {
-            // foreach (var packet in incompletePackets)
-            // {
-            //     if (packet.Value.initTime > Time.unscaledTime + 7.5f)
-            //     {
-            //         incompletePackets.Remove(packet.Key);
-            //     }
-            // }
-            
-            Receive();
-
+            if (!active) return;
+            var authentication = EpicApplication.Instance?.Authentication;
+            if (authentication == null || !authentication.IsLoggedIn || authentication.ProductUserId == null)
+                QueueLocalIdentityFailure("EOS authentication is no longer available to this P2P session");
+            // EOS callbacks establish player identities before their first
+            // authentication/data packet is drained in this same frame.
             var actionCount = queuedActions.Count;
-            for (int i = 0; i < actionCount; i++)
+            for (int i = 0; i < actionCount && queuedActions.Count > 0 && active; i++)
             {
-                queuedActions[0]();
-                queuedActions.RemoveAt(0);
+                var action = queuedActions.Dequeue();
+                try { action(); }
+                catch (Exception ex) { SRMP.Log($"[Network] Connection callback failed: {ex}"); }
             }
+            if (!active) return;
+            Receive();
+            foreach (var receiver in reassemblers.Values) receiver.Expire(Time.realtimeSinceStartup);
+            if (active) OnTick();
         }
 
         protected void SetRelayControl(RelayControl relayControl)
@@ -71,10 +73,12 @@ namespace SRMultiplayer.EpicSDK
 
         protected void SetupP2P()
         {
+            if (active) return;
+            active = true;
             var queueOptions = new SetPacketQueueSizeOptions
             {
-                IncomingPacketQueueMaxSizeBytes = 128 * 1024 * 1024,
-                OutgoingPacketQueueMaxSizeBytes = 128 * 1024 * 1024,
+                IncomingPacketQueueMaxSizeBytes = 16 * 1024 * 1024,
+                OutgoingPacketQueueMaxSizeBytes = 16 * 1024 * 1024,
             };
             p2PInterface.SetPacketQueueSize(ref queueOptions);
             var addNotifyPeerConnectionRequestOptions = new AddNotifyPeerConnectionRequestOptions
@@ -113,7 +117,10 @@ namespace SRMultiplayer.EpicSDK
 
         public void Shutdown()
         {
-
+            if (!active) return;
+            active = false;
+            queuedActions.Clear();
+            reassemblers.Clear();
             if (notifyPeerConnectionRequestHandle.HasValue)
             {
                 p2PInterface.RemoveNotifyPeerConnectionRequest(notifyPeerConnectionRequestHandle.Value);
@@ -143,19 +150,80 @@ namespace SRMultiplayer.EpicSDK
             OnShutdown();
         }
 
+        protected void ForgetPeer(ProductUserId peer)
+        {
+            if (peer != null) reassemblers.Remove(peer);
+        }
+
+        protected void SendMessage(ProductUserId peer, PacketType type, NetOutgoingMessage message,
+            PacketReliability reliability = PacketReliability.ReliableOrdered)
+        {
+            if (!active || localIdentityFailureQueued || peer == null) return;
+            // Fragmented state must be reliable: losing one piece otherwise
+            // loses the entire snapshot. LengthBytes excludes buffer capacity.
+            if (message.LengthBytes > PacketFraming.FragmentSize)
+                reliability = PacketReliability.ReliableOrdered;
+            foreach (var frame in PacketFraming.Encode((ushort)type, ++nextMessageId, message.Data, message.LengthBytes))
+                SendDataInternal(peer, frame, reliability);
+        }
+
+        protected bool TryReadMessage(ProductUserId peer, ref NetIncomingMessage message, out PacketType type)
+        {
+            if (!reassemblers.TryGetValue(peer, out var receiver))
+            {
+                receiver = new PacketReassembler();
+                reassemblers.Add(peer, receiver);
+            }
+            bool complete = receiver.TryReceive(message.Data, message.LengthBytes, Time.realtimeSinceStartup,
+                out ushort packetType, out byte[] payload);
+            type = (PacketType)packetType;
+            if (!complete) return false;
+            message = new NetIncomingMessage { Data = payload, LengthBytes = payload.Length };
+            if (type != PacketType.Authentication && message.ReadUInt16() != packetType)
+                throw new System.IO.InvalidDataException("SRMP payload type does not match its frame.");
+            return true;
+        }
+
+        protected virtual void OnTick() { }
+
         public virtual void OnShutdown() { }
+
+        protected virtual void OnLocalIdentityInvalidated(string reason)
+        {
+            SRMP.Log("[EOS] " + reason);
+        }
+
+        private void QueueLocalIdentityFailure(string reason)
+        {
+            if (localIdentityFailureQueued) return;
+            localIdentityFailureQueued = true;
+            SRMP.Log("[EOS] " + reason + "; stopping this session instead of repeating invalid-user P2P calls every frame.");
+            EpicApplication.Instance?.Authentication?.ReauthenticateAfterInvalidP2PIdentity();
+            queuedActions.Enqueue(() => OnLocalIdentityInvalidated(reason));
+        }
 
         private void Receive()
         {
+            if (localIdentityFailureQueued) return;
+            float receiveStarted = Time.realtimeSinceStartup;
+            int receivedPackets = 0;
             var getNextReceivedPacketSizeOptions = new GetNextReceivedPacketSizeOptions()
             {
                 LocalUserId = EpicApplication.Instance.Authentication.ProductUserId,
-                RequestedChannel = null
+                RequestedChannel = 0
             };
-            while (true)
+            while (active && receivedPackets < MaxPacketsPerTick)
             {
+                if (receivedPackets > 0 && Time.realtimeSinceStartup - receiveStarted >= ReceiveBudgetSeconds)
+                    break;
+
                 var result = p2PInterface.GetNextReceivedPacketSize(ref getNextReceivedPacketSizeOptions, out uint outPacketSizeBytes);
 
+                if (result == Result.InvalidUser)
+                {
+                    QueueLocalIdentityFailure("EOS rejected the local Product User ID while reading P2P data");
+                    break;
+                }
                 if(result != Result.Success || outPacketSizeBytes == 0)
                 {
                     break;
@@ -171,14 +239,30 @@ namespace SRMultiplayer.EpicSDK
                 ProductUserId senderUserId = null;
                 SocketId socketId = SocketId.Empty;
                 ArraySegment<byte> buffer = new ArraySegment<byte>(new byte[outPacketSizeBytes]);
-                p2PInterface.ReceivePacket(ref receivePacketOptions, ref senderUserId, ref socketId, out byte outChannel, buffer, out uint outBytesWritten);
+                result = p2PInterface.ReceivePacket(ref receivePacketOptions, ref senderUserId, ref socketId, out byte outChannel, buffer, out uint outBytesWritten);
+                if (result == Result.InvalidUser)
+                {
+                    QueueLocalIdentityFailure("EOS rejected the local Product User ID while receiving P2P data");
+                    break;
+                }
+                if (result != Result.Success) break;
+                receivedPackets++;
 
-                if(senderUserId != null && outBytesWritten > 0)
+                if(senderUserId != null && outBytesWritten > 0 && socketId.SocketName == SRMP_SOCKETID.SocketName)
                 {
                     NetIncomingMessage incomingMessage = new NetIncomingMessage();
                     incomingMessage.LengthBytes = (int)outBytesWritten;
-                    incomingMessage.Data = buffer.Take((int)outBytesWritten).ToArray();
-                    OnMessageReceived(senderUserId, outChannel, ref incomingMessage);
+                    incomingMessage.Data = buffer.Array;
+                    try { OnMessageReceived(senderUserId, outChannel, ref incomingMessage); }
+                    catch (Exception ex)
+                    {
+                        SRMP.Log($"[Network] Packet from {senderUserId} failed ({outBytesWritten} bytes): {ex}");
+                        if (ex is System.IO.InvalidDataException)
+                        {
+                            SRMP.Log($"[Network] Closing peer {senderUserId} after invalid or incompatible packet data.");
+                            CloseConnection(senderUserId);
+                        }
+                    }
                 }   
             }
         }
@@ -190,6 +274,8 @@ namespace SRMultiplayer.EpicSDK
 
         protected void SendDataInternal(ProductUserId receiverUserId, byte[] data, PacketReliability packetReliability = PacketReliability.ReliableOrdered)//, byte channel = 0)
         {
+            if (localIdentityFailureQueued || EpicApplication.Instance?.Authentication?.ProductUserId == null)
+                return;
             var sendPacketOptions = new SendPacketOptions()
             {
                 AllowDelayedDelivery = false,
@@ -211,7 +297,7 @@ namespace SRMultiplayer.EpicSDK
         private void OnPeerConnectionInterrupted(ref OnPeerConnectionInterruptedInfo data)
         {
             var queuedData = data;
-            queuedActions.Add(() =>
+            queuedActions.Enqueue(() =>
             {
                 OnConnectionInterrupted(queuedData.RemoteUserId);
             });
@@ -226,7 +312,7 @@ namespace SRMultiplayer.EpicSDK
         {
             SRMP.Log("Peer connection established!");
             var queuedData = data;
-            queuedActions.Add(() =>
+            queuedActions.Enqueue(() =>
             {
                 OnConnected(queuedData.RemoteUserId, queuedData.NetworkType, queuedData.ConnectionType);
             });
@@ -237,7 +323,7 @@ namespace SRMultiplayer.EpicSDK
         private void OnPeerConnectionClosed(ref OnRemoteConnectionClosedInfo data)
         {
             var queuedData = data;
-            queuedActions.Add(() =>
+            queuedActions.Enqueue(() =>
             {
                 OnDisconnected(queuedData.RemoteUserId, queuedData.Reason);
             });
@@ -256,7 +342,7 @@ namespace SRMultiplayer.EpicSDK
             if (isServer)
             {
                 var queuedData = data;
-                queuedActions.Add(new Action(() =>
+                queuedActions.Enqueue(new Action(() =>
                 {
                     OnConnectionRequest(queuedData.RemoteUserId);
                 }));
@@ -269,6 +355,9 @@ namespace SRMultiplayer.EpicSDK
 
         protected void AcceptConnection(ProductUserId remoteUserId)
         {
+            if (localIdentityFailureQueued || remoteUserId == null
+                || EpicApplication.Instance?.Authentication?.ProductUserId == null)
+                return;
             var acceptConnectionOptions = new AcceptConnectionOptions
             {
                 LocalUserId = EpicApplication.Instance.Authentication.ProductUserId,
@@ -280,6 +369,9 @@ namespace SRMultiplayer.EpicSDK
 
         protected void CloseConnection(ProductUserId remoteUserId)
         {
+            if (localIdentityFailureQueued || remoteUserId == null
+                || EpicApplication.Instance?.Authentication?.ProductUserId == null)
+                return;
             var closeConnectionOptions = new CloseConnectionOptions
             {
                 LocalUserId = EpicApplication.Instance.Authentication.ProductUserId,

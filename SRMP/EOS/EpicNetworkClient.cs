@@ -1,4 +1,4 @@
-﻿using Epic.OnlineServices;
+using Epic.OnlineServices;
 using Epic.OnlineServices.P2P;
 using System;
 using System.Collections.Generic;
@@ -17,6 +17,10 @@ namespace SRMultiplayer.Networking
     public class NetworkClient : EpicP2P
     {
         private ProductUserId serverUserId;
+        internal Guid HostUUID { get; private set; }
+        private readonly Queue<Tuple<PacketType, NetIncomingMessage>> pendingMessages = new Queue<Tuple<PacketType, NetIncomingMessage>>();
+        private int pendingBytes;
+        private float authenticationDeadline;
         
         public static NetworkClient Instance { get; private set; }
         
@@ -37,8 +41,10 @@ namespace SRMultiplayer.Networking
                 return;
             }
 
+            Shutdown();
             this.serverUserId = serverUserId;
             Status = NetworkClientStatus.Connecting;
+            authenticationDeadline = Time.realtimeSinceStartup + 30f;
 
             SetupP2P();
 
@@ -50,112 +56,33 @@ namespace SRMultiplayer.Networking
             if (packet == null || serverUserId == null || Status == NetworkClientStatus.Disconnected || Status == NetworkClientStatus.None)
                 return;
 
-            NetOutgoingMessage om = new NetOutgoingMessage();
-            om.Data = Array.Empty<byte>();
-            
-            packet.Serialize(om);
-            
-            int fragCount = (om.m_data.Length + 999) / 1000;
-            var payload = om.m_data;
-            int len = payload.Length;
-            
-            byte[] packetTypeAsBytes = BitConverter.GetBytes((ushort)packet.GetPacketType());
-            
-            for (byte i = 0; i < fragCount; i++)
-            {               
-                int offset = i * 1000;
-                int chunkSize = Math.Min(1000, len - offset);
-                
-                byte[] buffer = new byte[4 + chunkSize];
-                buffer[0] = packetTypeAsBytes[0];
-                buffer[1] = packetTypeAsBytes[1];
-                buffer[2] = i;
-                buffer[3] = (byte)fragCount;
-
-                Buffer.BlockCopy(payload, offset, buffer, 4, chunkSize);
-
-                SendDataInternal(serverUserId, buffer, packetReliability);
-            }
-            
-            //SRMP.Log($"SEND {packet.GetPacketType()} {{ {BitConverter.ToString(om.m_data)} }}");
+            var message = new NetOutgoingMessage();
+            packet.Serialize(message);
+            SendMessage(serverUserId, packet.GetPacketType(), message, packetReliability);
         }
 
         public override void OnMessageReceived(ProductUserId senderUserId, byte channel, ref NetIncomingMessage im)
         {
-            PacketType packetType = PacketType.Unknown;
-            try
-            {
-                packetType = (PacketType)im.ReadUInt16();
-                byte fragmentIndex = im.ReadByte();
-                byte totalFragments = im.ReadByte();
-
-                if (totalFragments == 0 || fragmentIndex >= totalFragments)
-                {
-                    SRMP.Log($"Discarded malformed packet fragment from server: type={packetType}, fragment={fragmentIndex}, total={totalFragments}");
-                    return;
-                }
-
-                byte[] payload = im.Data.Skip(4).ToArray();
-
-                if (!incompletePackets.TryGetValue(packetType, out var msg) || msg.fragTotal != totalFragments)
-                {
-                    msg = new IncompletePacket
-                    {
-                        fragments = new byte[totalFragments][],
-                        fragTotal = totalFragments,
-                        fragIndex = 0,
-                    };
-                    incompletePackets[packetType] = msg;
-                }
-                if (msg.fragments[fragmentIndex] == null)
-                {
-                    msg.fragments[fragmentIndex] = payload;
-                    msg.fragIndex++;
-                }
-
-                if (msg.fragIndex >= msg.fragTotal)
-                {
-                    List<byte> completeData = new List<byte>();
-                    foreach (var frag in msg.fragments)
-                    {
-                        if (frag == null)
-                        {
-                            SRMP.Log($"Discarded incomplete packet from server: {packetType}");
-                            incompletePackets.Remove(packetType);
-                            return;
-                        }
-                        completeData.AddRange(frag);
-                    }
-                        
-
-                    incompletePackets.Remove(packetType);
-                    im = new NetIncomingMessage
-                    {
-                        m_data = completeData.ToArray(),
-                        LengthBytes = completeData.Count,
-                        m_readPosition = 16
-                    };
-                
-                    //SRMP.Log($"RECV {packetType} {{ {BitConverter.ToString(im.m_data)} }}");
-                }
-                else
-                    return;
-
-            }
-            catch (Exception e)
-            {
-                SRMP.Log($"Exception in receiving packets from server:\n{e}");
+            if (serverUserId == null || senderUserId != serverUserId || Status == NetworkClientStatus.Disconnected)
                 return;
-            }
+            if (!TryReadMessage(senderUserId, ref im, out PacketType packetType)) return;
+            SRMP.NoteServerContact();
             if (packetType == PacketType.Authentication)
             {
+                if (Status != NetworkClientStatus.Authenticating) return;
                 try
                 {
                     im.m_readPosition = 0;
                     
                     Globals.LocalID = im.ReadByte();
+                    Utils.ActorSequence = im.ReadInt32();
 
                     int playerCount = im.ReadInt32();
+                    if (playerCount < 2 || playerCount > 255)
+                    {
+                        SRMP.Log($"[Join] Invalid authentication roster count={playerCount}, payloadBytes={im.LengthBytes}, localId={Globals.LocalID}; update the host and all clients to the same SRMP build.");
+                        throw new System.IO.InvalidDataException("Invalid roster size.");
+                    }
                     for (int i = 0; i < playerCount; i++)
                     {
                         byte id = im.ReadByte();
@@ -187,6 +114,7 @@ namespace SRMultiplayer.Networking
                             SRMP.Log($"Player {id} is a VR player!");
                     }
                     Globals.PartyID = new Guid(im.ReadBytes(16));
+                    HostUUID = new Guid(im.ReadBytes(16));
                     var gameMode = (PlayerState.GameMode)im.ReadByte();
                     Globals.CurrentGameName = im.ReadString();
                     SRMP.Log("Auth Complete");
@@ -196,7 +124,7 @@ namespace SRMultiplayer.Networking
                     if (gameContext == null || gameContext.AutoSaveDirector == null)
                     {
                         SRMP.Log("Cannot finish multiplayer authentication: GameContext/AutoSaveDirector is not ready.");
-                        Status = NetworkClientStatus.Disconnected;
+                        SRMP.ReturnToMainMenu("authentication initialization failed");
                         return;
                     }
 
@@ -211,23 +139,60 @@ namespace SRMultiplayer.Networking
                 catch (Exception e)
                 {
                     SRMP.Log($"Exception while applying authentication/join data:\n{e}");
-                    Status = NetworkClientStatus.Disconnected;
+                    SRMP.ReturnToMainMenu("invalid authentication data");
                 }
             }
-            else
-                NetworkHandlerClient.HandlePacket(packetType, im);
+            else if (Status == NetworkClientStatus.Connected || packetType == PacketType.KickPlayer)
+            {
+                if (!Globals.GameLoaded && packetType != PacketType.KickPlayer)
+                {
+                    pendingBytes += im.LengthBytes;
+                    if (pendingBytes > 32 * 1024 * 1024)
+                    {
+                        SRMP.ReturnToMainMenu("join packet queue exceeded its limit");
+                        return;
+                    }
+                    pendingMessages.Enqueue(Tuple.Create(packetType, im));
+                }
+                else NetworkHandlerClient.HandlePacket(packetType, im);
+            }
+        }
+
+        internal void DrainPendingMessages()
+        {
+            while (pendingMessages.Count > 0 && Status == NetworkClientStatus.Connected && Globals.GameLoaded)
+            {
+                var pending = pendingMessages.Dequeue();
+                pendingBytes -= pending.Item2.LengthBytes;
+                NetworkHandlerClient.HandlePacket(pending.Item1, pending.Item2);
+            }
+        }
+
+        protected override void OnTick()
+        {
+            if ((Status == NetworkClientStatus.Connecting || Status == NetworkClientStatus.Authenticating) &&
+                Time.realtimeSinceStartup >= authenticationDeadline)
+                SRMP.ReturnToMainMenu("authentication timed out; verify that both peers use the same SRMP build");
+        }
+
+        protected override void OnLocalIdentityInvalidated(string reason)
+        {
+            SRMP.ReturnToMainMenu("Epic Online Services invalidated this connection; sign in again before rejoining (" + reason + ")");
         }
 
         public override void OnShutdown()
         {
+            PlayerInventory.Save();
+            pendingMessages.Clear();
+            pendingBytes = 0;
             EpicApplication.Instance?.Metrics?.EndSession();
 
             if (serverUserId != null)
                 CloseConnection(serverUserId);
 
             Status = NetworkClientStatus.Disconnected;
+            ForgetPeer(serverUserId);
             serverUserId = null;
-            incompletePackets.Clear();
 
             //the lobby closing routes here rather than through OnDisconnected,
             //so without this the player is left standing in a world that is no
@@ -248,9 +213,6 @@ namespace SRMultiplayer.Networking
             NetOutgoingMessage om = new NetOutgoingMessage();
             om.Data = Array.Empty<byte>();
 
-            om.Write((ushort)PacketType.Authentication);
-            om.Write((byte)0);
-            om.Write((byte)1);
             
             om.Write(Globals.Username ?? "Player");
             om.Write(Globals.UserData.UUID.ToByteArray());
@@ -264,7 +226,11 @@ namespace SRMultiplayer.Networking
             
             om.Write(Globals.VRInstalled);
             
-            SendDataInternal(serverUserId, om.Data);
+            var dlcs = SRSingleton<GameContext>.Instance.DLCDirector.Installed.ToList();
+            om.Write(dlcs.Count);
+            foreach (var dlc in dlcs) om.Write((byte)dlc);
+            SRMP.Log($"[Join] Sending DLCs: {string.Join(", ", dlcs)}");
+            SendMessage(serverUserId, PacketType.Authentication, om);
         }
 
         public override void OnConnected(ProductUserId remoteUserId, NetworkConnectionType networkType, ConnectionEstablishedType connectionType)
@@ -272,6 +238,7 @@ namespace SRMultiplayer.Networking
             if (serverUserId == null || remoteUserId != serverUserId)
                 return;
 
+            if (Status != NetworkClientStatus.Connecting) return;
             Status = NetworkClientStatus.Authenticating;
 
             EpicApplication.Instance?.Metrics?.BeginSession();
@@ -285,18 +252,7 @@ namespace SRMultiplayer.Networking
                 return;
 
             SRMP.Log($"Disconnected from server: {reason}");
-            EpicApplication.Instance?.Metrics?.EndSession();
-
-            Status = NetworkClientStatus.Disconnected;
-            incompletePackets.Clear();
-            serverUserId = null;
-
-            if (SceneManager.GetActiveScene().buildIndex == 3)
-            {
-                Globals.GameLoaded = false;
-                Globals.ClientLoaded = false;
-                SceneManager.LoadScene(2);
-            }
+            SRMP.ReturnToMainMenu($"connection closed ({reason})");
         }
         
         

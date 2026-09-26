@@ -15,14 +15,14 @@ namespace SRMultiplayer.Packets.ModCompat
         public PacketSpiritMode() {}
         public PacketSpiritMode(NetIncomingMessage im) { Deserialize(im); }
 
-        public void Deserialize(NetIncomingMessage im)
+        public override void Deserialize(NetIncomingMessage im)
         {
             Mode = (BehaviorMode) im.ReadSByte();
         }
 
-        public void Serialize(NetOutgoingMessage om)
+        public override void Serialize(NetOutgoingMessage om)
         {
-            base.Serialize(om);
+            om.Write((ushort)GetPacketType());
             
             om.Write((sbyte)Mode);
         }

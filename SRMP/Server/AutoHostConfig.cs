@@ -57,6 +57,13 @@ namespace SRMultiplayer.Server
         public bool GodMode = true;
 
         /// <summary>
+        /// Stop Unity game time while the dedicated host has no authenticated
+        /// remote players. EOS and SRMP keep ticking on realtime so new players
+        /// can still connect and resume the world.
+        /// </summary>
+        public bool PauseWhenNoPlayers = true;
+
+        /// <summary>
         /// Frames per second the server aims for. This is the tick rate of the
         /// whole session, not a graphics setting: packets are only drained once
         /// per frame, so a slow loop shows up as everyone's ping and as world
@@ -65,12 +72,15 @@ namespace SRMultiplayer.Server
         /// </summary>
         public int TargetFrameRate = 60;
 
+        /// <summary>Lower-cost game-loop rate while no remote player is connected.</summary>
+        public int IdleTargetFrameRate = 12;
+
         /// <summary>
-        /// Usernames allowed to run privileged chat commands such as /tp. A
-        /// headless server has nobody sitting at it, so without this nobody can
-        /// use them at all.
+        /// Authenticated EOS Product User IDs allowed to run privileged chat
+        /// commands such as /tp. Player names are supplied by clients and are
+        /// not safe identities for access control.
         /// </summary>
-        public List<string> Operators = new List<string>();
+        public List<string> OperatorProductUserIds = new List<string>();
 
         /// <summary>Seconds to wait at the main menu before touching anything.</summary>
         public float StartupDelaySeconds = 3f;

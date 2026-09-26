@@ -282,10 +282,13 @@ Read it like this:
 | 20-45 fps | Usable, some sync lag. |
 | under 20 fps | This is your problem. Ping and desync both follow from it. |
 
-`SRMP_TICK_RATE` sets the target (default 60) and vsync is always disabled —
-waiting on a display the server does not have is pure added latency. Raising the
-target only helps if the CPU can keep up; if the measured rate sits well below
-the target, the container needs more CPU, not a higher target.
+`SRMP_TICK_RATE` sets the active target (default 60) and vsync is always
+disabled — waiting on a display the server does not have is pure added latency.
+When no remote player is connected, the mod pauses world time and lowers the
+Unity loop to `IdleTargetFrameRate` (12 fps by default) to reduce idle CPU use;
+it restores the configured active rate when someone joins. Raising the active
+target only helps if the CPU can keep up; if measured FPS stays well below it,
+the container needs more CPU, not a higher target.
 
 ### If players are desyncing, suspect CPU before RAM
 

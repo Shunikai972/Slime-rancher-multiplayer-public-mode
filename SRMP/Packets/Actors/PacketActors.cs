@@ -1,4 +1,4 @@
-﻿using Lidgren.Network;
+using Lidgren.Network;
 using MonomiPark.SlimeRancher.DataModel;
 using System;
 using System.Collections.Generic;
@@ -24,7 +24,7 @@ namespace SRMultiplayer.Packets
             public SlimeModel SlimeModel;
             public ProduceModel ProduceModel;
             public AnimalModel AnimalModel;
-            public PlortModel PlortModel;
+            public double? PlortDestroyTime;
 
             public string NicknameModValue;
         }
@@ -81,10 +81,10 @@ namespace SRMultiplayer.Packets
                     }
                 }
 
-                om.Write(actorData.PlortModel != null);
-                if (actorData.PlortModel != null)
+                om.Write(actorData.PlortDestroyTime.HasValue);
+                if (actorData.PlortDestroyTime.HasValue)
                 {
-                    om.Write(actorData.PlortModel.destroyTime);
+                    om.Write(actorData.PlortDestroyTime.Value);
                 }
                 
                 om.Write(actorData.NicknameModValue != null);
@@ -115,8 +115,8 @@ namespace SRMultiplayer.Packets
                 {
                     actorData.SlimeModel = new SlimeModel(0, Identifiable.Id.NONE, MonomiPark.SlimeRancher.Regions.RegionRegistry.RegionSetId.HOME, null);
                     actorData.SlimeModel.emotionAgitation = new SlimeEmotions.EmotionState(SlimeEmotions.Emotion.AGITATION, im.ReadFloat(), 0, 0, 0);
-                    actorData.SlimeModel.emotionFear = new SlimeEmotions.EmotionState(SlimeEmotions.Emotion.AGITATION, im.ReadFloat(), 0, 0, 0);
-                    actorData.SlimeModel.emotionHunger = new SlimeEmotions.EmotionState(SlimeEmotions.Emotion.AGITATION, im.ReadFloat(), 0, 0, 0);
+                    actorData.SlimeModel.emotionFear = new SlimeEmotions.EmotionState(SlimeEmotions.Emotion.FEAR, im.ReadFloat(), 0, 0, 0);
+                    actorData.SlimeModel.emotionHunger = new SlimeEmotions.EmotionState(SlimeEmotions.Emotion.HUNGER, im.ReadFloat(), 0, 0, 0);
                     actorData.SlimeModel.isFeral = im.ReadBoolean();
                     actorData.SlimeModel.isGlitch = im.ReadBoolean();
                     actorData.SlimeModel.fashions = new List<Identifiable.Id>();
@@ -146,8 +146,7 @@ namespace SRMultiplayer.Packets
                 }
                 if (im.ReadBoolean())
                 {
-                    actorData.PlortModel = new PlortModel(0, Identifiable.Id.NONE, MonomiPark.SlimeRancher.Regions.RegionRegistry.RegionSetId.HOME, new GameObject());
-                    actorData.PlortModel.destroyTime = im.ReadDouble();
+                    actorData.PlortDestroyTime = im.ReadDouble();
                 }
                 
                 if (im.ReadBoolean())

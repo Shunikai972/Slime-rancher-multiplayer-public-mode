@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using SRMultiplayer.Networking;
 using SRMultiplayer.Packets;
 using System;
@@ -18,10 +18,9 @@ namespace SRMultiplayer.Patches
             if (!Globals.IsMultiplayer) return;
             
             var netActor = __instance.GetComponent<NetworkActor>();
-            SRMP.Log($"Vacuumable.capture - NetActor is null:{netActor == null}, NetActor is local:{netActor.IsLocal}");
             if (netActor != null && !netActor.IsLocal)
             {
-                netActor.TakeOwnership();
+                netActor.TakeOwnership(true);
             }
         }
     }

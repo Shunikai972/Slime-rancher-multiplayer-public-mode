@@ -1,7 +1,8 @@
-﻿using Lidgren.Network;
+using Lidgren.Network;
 using MonomiPark.SlimeRancher.DataModel;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -11,6 +12,10 @@ namespace SRMultiplayer.Packets
     [Packet(PacketType.Gadgets)]
     public class PacketGadgets : Packet
     {
+        private const int MaxGadgets = 10000;
+        private const int MaxAmmoSlots = 1024;
+        private const int MaxFashions = 1024;
+        private const int MaxDronePrograms = 128;
         public struct GadgetSiteData
         {
             public string ID;
@@ -28,6 +33,8 @@ namespace SRMultiplayer.Packets
         {
             base.Serialize(om);
 
+            if (Gadgets == null || Gadgets.Count > MaxGadgets)
+                throw new InvalidDataException("Invalid gadget count.");
             om.Write(Gadgets.Count);
             foreach(var gadgetData in Gadgets)
             {
@@ -47,6 +54,8 @@ namespace SRMultiplayer.Packets
                 if (gadgetData.Model is WarpDepotModel)
                 {
                     om.Write(((WarpDepotModel)gadgetData.Model).isPrimary);
+                    if (((WarpDepotModel)gadgetData.Model).ammo.slots.Length > MaxAmmoSlots)
+                        throw new InvalidDataException("Invalid warp depot ammo slot count.");
                     om.Write(((WarpDepotModel)gadgetData.Model).ammo.slots.Length);
                     foreach(var slot in ((WarpDepotModel)gadgetData.Model).ammo.slots)
                     {
@@ -59,6 +68,8 @@ namespace SRMultiplayer.Packets
                     om.Write((ushort)((SnareModel)gadgetData.Model).baitTypeId);
                     om.Write((ushort)((SnareModel)gadgetData.Model).gordoTypeId);
                     om.Write(((SnareModel)gadgetData.Model).gordoEatenCount);
+                    if (((SnareModel)gadgetData.Model).fashions.Count > MaxFashions)
+                        throw new InvalidDataException("Invalid snare fashion count.");
                     om.Write(((SnareModel)gadgetData.Model).fashions.Count);
                     foreach(var fashion in ((SnareModel)gadgetData.Model).fashions)
                     {
@@ -75,6 +86,10 @@ namespace SRMultiplayer.Packets
                 {
                     om.Write(((DroneModel)gadgetData.Model).position);
                     om.Write(((DroneModel)gadgetData.Model).rotation);
+                    if (((DroneModel)gadgetData.Model).ammo.slots.Length > MaxAmmoSlots ||
+                        ((DroneModel)gadgetData.Model).fashions.Count > MaxFashions ||
+                        ((DroneModel)gadgetData.Model).programs.Length > MaxDronePrograms)
+                        throw new InvalidDataException("Invalid drone inventory, fashion, or program count.");
                     om.Write(((DroneModel)gadgetData.Model).ammo.slots.Length);
                     foreach(var slot in ((DroneModel)gadgetData.Model).ammo.slots)
                     {
@@ -103,7 +118,7 @@ namespace SRMultiplayer.Packets
             base.Deserialize(im);
 
             Gadgets = new List<GadgetSiteData>();
-            int gadgetCount = im.ReadInt32();
+            int gadgetCount = ReadBoundedCount(im, "gadget", MaxGadgets);
             for(int i = 0; i < gadgetCount; i++)
             {
                 var gadgetData = new GadgetSiteData()
@@ -126,7 +141,7 @@ namespace SRMultiplayer.Packets
                 {
                     var model = new WarpDepotModel(gadgetData.gadgetId, gadgetData.ID, null);
                     model.isPrimary = im.ReadBoolean();
-                    int slotCount = im.ReadInt32();
+                    int slotCount = ReadBoundedCount(im, "warp depot ammo slot", MaxAmmoSlots);
                     model.ammo = new AmmoModel();
                     model.ammo.slots = new Ammo.Slot[slotCount];
                     for(int j = 0; j < slotCount; j++)
@@ -142,10 +157,10 @@ namespace SRMultiplayer.Packets
                     model.gordoTypeId = (Identifiable.Id)im.ReadUInt16();
                     model.gordoEatenCount = im.ReadInt32();
                     model.fashions = new List<Identifiable.Id>();
-                    int fashionCount = im.ReadInt32();
+                    int fashionCount = ReadBoundedCount(im, "snare fashion", MaxFashions);
                     for(int j = 0; j < fashionCount; j++)
                     {
-                        model.fashions.Add((Identifiable.Id)im.ReadInt16());
+                        model.fashions.Add((Identifiable.Id)im.ReadUInt16());
                     }
                     gadgetData.Model = model;
                 }
@@ -160,7 +175,7 @@ namespace SRMultiplayer.Packets
                     var model = new DroneModel(gadgetData.gadgetId, gadgetData.ID, null);
                     model.position = im.ReadVector3();
                     model.rotation = im.ReadQuaternion();
-                    int slotCount = im.ReadInt32();
+                    int slotCount = ReadBoundedCount(im, "drone ammo slot", MaxAmmoSlots);
                     model.ammo = new AmmoModel();
                     model.ammo.slots = new Ammo.Slot[slotCount];
                     for (int j = 0; j < slotCount; j++)
@@ -168,14 +183,14 @@ namespace SRMultiplayer.Packets
                         model.ammo.slots[j] = im.ReadAmmoSlot();
                     }
                     model.fashions = new List<Identifiable.Id>();
-                    int fashionCount = im.ReadInt32();
+                    int fashionCount = ReadBoundedCount(im, "drone fashion", MaxFashions);
                     for (int j = 0; j < fashionCount; j++)
                     {
-                        model.fashions.Add((Identifiable.Id)im.ReadInt16());
+                        model.fashions.Add((Identifiable.Id)im.ReadUInt16());
                     }
                     model.noClip = im.ReadBoolean();
                     model.batteryDepleteTime = im.ReadDouble();
-                    int programCount = im.ReadInt32();
+                    int programCount = ReadBoundedCount(im, "drone program", MaxDronePrograms);
                     model.programs = new DroneModel.ProgramData[programCount];
                     for(int j = 0; j < programCount; j++)
                     {

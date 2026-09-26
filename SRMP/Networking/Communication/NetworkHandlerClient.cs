@@ -1,4 +1,4 @@
-﻿using DG.Tweening;
+using DG.Tweening;
 using Lidgren.Network;
 using MonomiPark.SlimeRancher.DataModel;
 using MonomiPark.SlimeRancher.Regions;
@@ -17,195 +17,211 @@ namespace SRMultiplayer.Networking
     {
         public static void HandlePacket(PacketType type, NetIncomingMessage im)
         {
-            Globals.HandlePacket = true;
-            if (!Globals.PacketSize.ContainsKey(type))
-                Globals.PacketSize.Add(type, 0);
-            Globals.PacketSize[type] += im.LengthBytes;
-
-            if (Globals.CustomPackets.TryGetValue(type, out var packetClass))
+            bool wasHandlingPacket = Globals.HandlePacket;
+            try
             {
-                Packet packet = (Packet)packetClass.GetConstructor(new[] { typeof(NetIncomingMessage) })
-                    ?.Invoke(new object[] { im });
+                Globals.HandlePacket = true;
+                if (!Globals.PacketSize.ContainsKey(type))
+                    Globals.PacketSize.Add(type, 0);
+                Globals.PacketSize[type] += im.LengthBytes;
 
-                if (packet != null)
-                    packet.InvokeMethod("HandleClient", packet);
-                else
-                    SRMP.Log($"Got unhandled packet:  {type}" + Enum.GetName(typeof(PacketType), type));
+                if (Globals.CustomPackets.TryGetValue(type, out var packetClass))
+                {
+                    Packet packet = (Packet)packetClass.GetConstructor(new[] { typeof(NetIncomingMessage) })
+                        ?.Invoke(new object[] { im });
 
-                return;
+                    if (packet != null)
+                    {
+                        var handler = AccessTools.Method(packetClass, "HandleClient", new[] { packetClass });
+                        if (handler == null) throw new MissingMethodException(packetClass.FullName, "HandleClient");
+                        handler.Invoke(packet, new object[] { packet });
+                    }
+                    else
+                        SRMP.Log($"Got unhandled packet:  {type}" + Enum.GetName(typeof(PacketType), type));
+
+                    return;
+                }
+
+                switch (type)
+                {
+                    //Player amimations
+                    case PacketType.PlayerAnimation: OnPlayerAnimation(new PacketPlayerAnimation(im)); break;
+
+                    //Players
+                    case PacketType.PlayerJoined: OnPlayerJoined(new PacketPlayerJoined(im)); break;
+                    case PacketType.PlayerLeft: OnPlayerLeft(new PacketPlayerLeft(im)); break;
+                    case PacketType.PlayerLoaded: OnPlayerLoaded(new PacketPlayerLoaded(im)); break;
+                    case PacketType.PlayerPosition: OnPlayerPosition(new PacketPlayerPosition(im)); break;
+                    case PacketType.PlayerFX: OnPlayerFX(new PacketPlayerFX(im)); break;
+                    case PacketType.PlayerCurrency: OnPlayerCurrency(new PacketPlayerCurrency(im)); break;
+                    case PacketType.PlayerCurrencyDisplay:
+                        OnPlayerCurrencyDisplay(new PacketPlayerCurrencyDisplay(im)); break;
+                    case PacketType.PlayerUpgrade: OnPlayerUpgrade(new PacketPlayerUpgrade(im)); break;
+                    case PacketType.PlayerUpgradeUnlock: OnPlayerUpgradeUnlock(new PacketPlayerUpgradeUnlock(im)); break;
+                    case PacketType.PlayerChat: OnPlayerChat(new PacketPlayerChat(im)); break;
+                    case PacketType.KickPlayer: OnPlayerKicked(new PacketKickClient(im)); break;
+
+                    // Region
+                    case PacketType.RegionOwner: OnRegionOwner(new PacketRegionOwner(im)); break;
+
+                    //Actors
+                    case PacketType.Actors: OnActors(new PacketActors(im)); break;
+                    case PacketType.ActorSpawn: OnActorSpawn(new PacketActorSpawn(im)); break;
+                    case PacketType.ActorDestroy: OnActorDestroy(new PacketActorDestroy(im)); break;
+                    case PacketType.ActorOwner: OnActorOwner(new PacketActorOwner(im)); break;
+                    case PacketType.ActorPosition: OnActorPosition(new PacketActorPosition(im)); break;
+                    case PacketType.ActorPositions: OnActorPositions(new PacketActorPositions(im)); break;
+                    case PacketType.ActorResourceAttach: OnActorResourceAttach(new PacketActorResourceAttach(im)); break;
+                    case PacketType.ActorResourceState: OnActorResourceState(new PacketActorResourceState(im)); break;
+                    case PacketType.ActorReproduceTime: OnActorReproduceTime(new PacketActorReproduceTime(im)); break;
+                    case PacketType.ActorEmotions: OnActorEmotions(new PacketActorEmotions(im)); break;
+                    case PacketType.ActorFeral: OnActorFeral(new PacketActorFeral(im)); break;
+                    case PacketType.ActorFX: OnActorFX(new PacketActorFX(im)); break;
+
+                    //LandPlots
+                    case PacketType.LandPlots: OnLandPlots(new PacketLandplots(im)); break;
+                    case PacketType.LandPlotSiloInsert: OnLandPlotSiloInsert(new PacketLandPlotSiloInsert(im)); break;
+                    case PacketType.LandPlotSiloRemove: OnLandPlotSiloRemove(new PacketLandPlotSiloRemove(im)); break;
+                    case PacketType.LandPlotAsh: OnLandPlotAsh(new PacketLandPlotAsh(im)); break;
+                    case PacketType.LandPlotSiloSlot: OnLandPlotSiloSlot(new PacketLandPlotSiloSlot(im)); break;
+                    case PacketType.LandPlotFeederSpeed: OnLandPlotFeederSpeed(new PacketLandPlotFeederSpeed(im)); break;
+                    case PacketType.LandPlotCollect: OnLandPlotCollect(new PacketLandPlotCollect(im)); break;
+                    case PacketType.LandPlotReplace: OnLandPlotReplace(new PacketLandPlotReplace(im)); break;
+                    case PacketType.LandPlotUpgrade: OnLandPlotUpgrade(new PacketLandPlotUpgrade(im)); break;
+                    case PacketType.LandPlotPlantGarden: OnLandPlotPlantGarden(new PacketLandPlotPlantGarden(im)); break;
+                    case PacketType.LandPlotStartCollection:
+                        OnLandPlotStartCollection(new PacketLandPlotStartCollection(im)); break;
+                    case PacketType.LandPlotSiloAmmoAdd: OnLandPlotSiloAmmoAdd(new PacketLandPlotSiloAmmoAdd(im)); break;
+                    case PacketType.LandPlotSiloAmmoRemove:
+                        OnLandPlotSiloAmmoRemove(new PacketLandPlotSiloAmmoRemove(im)); break;
+                    case PacketType.LandPlotSiloAmmoClear:
+                        OnLandPlotSiloAmmoClear(new PacketLandPlotSiloAmmoClear(im)); break;
+
+                    //World
+                    case PacketType.WorldData: OnWorldData(new PacketWorldData(im)); break;
+                    case PacketType.WorldTime: OnWorldTime(new PacketWorldTime(im)); break;
+                    case PacketType.Pong: OnPong(new PacketPong(im)); break;
+                    case PacketType.PlayerPings: OnPlayerPings(new PacketPlayerPings(im)); break;
+                    case PacketType.NameSuggestions: OnNameSuggestions(new PacketNameSuggestions(im)); break;
+                    case PacketType.WorldFastForward: OnWorldFastForward(new PacketWorldFastForward(im)); break;
+                    case PacketType.WorldProgress: OnWorldProgress(new PacketWorldProgress(im)); break;
+                    case PacketType.WorldKey: OnWorldKey(new PacketWorldKey(im)); break;
+                    case PacketType.WorldMapUnlock: OnWorldMapUnlock(new PacketWorldMapUnlock(im)); break;
+                    case PacketType.WorldSwitchActivate: OnWorldSwitchActivate(new PacketWorldSwitchActivate(im)); break;
+                    case PacketType.WorldSelectPalette: OnWorldSelectPalette(new PacketWorldSelectPalette(im)); break;
+                    case PacketType.WorldSwitches: OnWorldSwitches(new PacketWorldSwitches(im)); break;
+                    case PacketType.WorldDecorizer: OnWorldDecorizer(new PacketWorldDecorizer(im)); break;
+                    case PacketType.WorldDecorizerSetting:
+                        OnWorldDecorizerSetting(new PacketWorldDecorizerSetting(im)); break;
+                    case PacketType.WorldMarketPrices: OnWorldMarketPrices(new PacketWorldMarketPrices(im)); break;
+                    case PacketType.WorldCredits: OnWorldCredits(new PacketWorldCredits(im)); break;
+                    case PacketType.WorldMailSend: OnWorldMailSend(new PacketWorldMailSend(im)); break;
+                    case PacketType.WorldMailRead: OnWorldMailRead(new PacketWorldMailRead(im)); break;
+
+                    //FX
+                    case PacketType.GlobalFX: OnGlobalFX(new PacketGlobalFX(im)); break;
+                    case PacketType.IncinerateFX: OnIncinerateFX(new PacketIncinerateFX(im)); break;
+                    case PacketType.PlayAudio: OnPlayAudio(new PacketPlayAudio(im)); break;
+
+                    //AccessDoors
+                    case PacketType.AccessDoors: OnAccessDoors(new PacketAccessDoors(im)); break;
+                    case PacketType.AccessDoorOpen: OnAccessDoorOpen(new PacketAccessDoorOpen(im)); break;
+
+                    //Gordos
+                    case PacketType.Gordos: OnGordos(new PacketGordos(im)); break;
+                    case PacketType.GordoEat: OnGordoEat(new PacketGordoEat(im)); break;
+
+                    //PuzzleSlots
+                    case PacketType.PuzzleSlots: OnPuzzleSlots(new PacketPuzzleSlots(im)); break;
+                    case PacketType.PuzzleSlotFilled: OnPuzzleSlotFilled(new PacketPuzzleSlotFilled(im)); break;
+                    case PacketType.PuzzleGateActivate: OnPuzzleGateActivate(new PacketPuzzleGateActivate(im)); break;
+
+                    //Pedia
+                    case PacketType.PediaShowPopup: OnPediaShowPopup(new PacketPediaShowPopup(im)); break;
+                    case PacketType.PediaUnlock: OnPediaUnlock(new PacketPediaUnlock(im)); break;
+
+                    //gadgets
+                    case PacketType.Gadgets: OnGadgets(new PacketGadgets(im)); break;
+                    case PacketType.GadgetRemove: OnGadgetRemove(new PacketGadgetRemove(im)); break;
+                    case PacketType.GadgetRotation: OnGadgetRotation(new PacketGadgetRotation(im)); break;
+                    case PacketType.GadgetRefinerySpend: OnGadgetRefinerySpend(new PacketGadgetRefinerySpend(im)); break;
+                    case PacketType.GadgetAdd: OnGadgetAdd(new PacketGadgetAdd(im)); break;
+                    case PacketType.GadgetAddBlueprint: OnGadgetAddBlueprint(new PacketGadgetAddBlueprint(im)); break;
+                    case PacketType.GadgetSpend: OnGadgetSpend(new PacketGadgetSpend(im)); break;
+                    case PacketType.GadgetSpawn: OnGadgetSpawn(new PacketGadgetSpawn(im)); break;
+                    case PacketType.GadgetExtractorUpdate:
+                        OnGadgetExtractorUpdate(new PacketGadgetExtractorUpdate(im)); break;
+                    case PacketType.GadgetTurrets: OnGadgetTurrets(new PacketGadgetTurrets(im)); break;
+                    case PacketType.GadgetSnareAttach: OnGadgetSnareAttach(new PacketGadgetSnareAttach(im)); break;
+                    case PacketType.GadgetSnareGordo: OnGadgetSnareGordo(new PacketGadgetSnareGordo(im)); break;
+                    case PacketType.GadgetEchoNetTime: OnGadgetEchoNetTime(new PacketGadgetEchoNetTime(im)); break;
+
+                    //Fashion
+                    case PacketType.FashionAttach: OnFashionAttach(new PacketFashionAttach(im)); break;
+                    case PacketType.FashionDetachAll: OnFashionDetachAll(new PacketFashionDetachAll(im)); break;
+
+                    //Drone
+                    case PacketType.DroneAmmoAdd: OnDroneAmmoAdd(new PacketDroneAmmoAdd(im)); break;
+                    case PacketType.DroneAmmoClear: OnDroneAmmoClear(new PacketDroneAmmoClear(im)); break;
+                    case PacketType.DroneAmmoRemove: OnDroneAmmoRemove(new PacketDroneAmmoRemove(im)); break;
+                    case PacketType.DroneAnimation: OnDroneAnimation(new PacketDroneAnimation(im)); break;
+                    case PacketType.DronePrograms: OnDronePrograms(new PacketDronePrograms(im)); break;
+                    case PacketType.DroneLiquid: OnDroneLiquid(new PacketDroneLiquid(im)); break;
+                    case PacketType.DroneStationEnabled: OnDroneStationEnabled(new PacketDroneStationEnabled(im)); break;
+                    case PacketType.DronePosition: OnDronePosition(new PacketDronePosition(im)); break;
+                    case PacketType.DroneActive: OnDroneActive(new PacketDroneActive(im)); break;
+
+                    //TreasurePod
+                    case PacketType.TreasurePods: OnTreasurePods(new PacketTreasurePods(im)); break;
+                    case PacketType.TreasurePodOpen: OnTreasurePodOpen(new PacketTreasurePodOpen(im)); break;
+
+                    //Exchanges
+                    case PacketType.ExchangeOffers: OnExchangeOffers(new PacketExchangeOffers(im)); break;
+                    case PacketType.ExchangeOffer: OnExchangeOffer(new PacketExchangeOffer(im)); break;
+                    case PacketType.ExchangeClear: OnExchangeClear(new PacketExchangeClear(im)); break;
+                    case PacketType.ExchangePrepareDaily: OnExchangePrepareDaily(new PacketExchangePrepareDaily(im)); break;
+                    case PacketType.ExchangeTryAccept: OnExchangeTryAccept(new PacketExchangeTryAccept(im)); break;
+
+                    //Oasis
+                    case PacketType.Oasis: OnOasis(new PacketOasis(im)); break;
+                    case PacketType.OasisLive: OnOasisLive(new PacketOasisLive(im)); break;
+
+                    //FireColumns
+                    case PacketType.FireColumnActivate: OnFireColumnActivate(new PacketFireColumnActivate(im)); break;
+                    case PacketType.FireStormMode: OnFireStormMode(new PacketFireStormMode(im)); break;
+
+                    //Others
+                    case PacketType.GingerAction: OnGingerAction(new PacketGingerAction(im)); break;
+                    case PacketType.KookadobaAction: OnKookadobaAction(new PacketKookadobaAction(im)); break;
+                    case PacketType.GingerAttach: OnGingerAttach(new PacketGingerAttach(im)); break;
+                    case PacketType.KookadobaAttach: OnKookadobaAttach(new PacketKookadobaAttach(im)); break;
+
+                    // Race
+                    case PacketType.RaceActivate: OnRaceActivate(new PacketRaceActivate(im)); break;
+                    case PacketType.RaceEnd: OnRaceEnd(new PacketRaceEnd(im)); break;
+                    case PacketType.RaceTime: OnRaceTime(new PacketRaceTime(im)); break;
+                    case PacketType.RaceTrigger: OnRaceTrigger(new PacketRaceTrigger(im)); break;
+
+    #if SRML
+                    // Mod Compatibility
+                    case PacketType.SetNickname: OnSetNickname(new PacketSetNickname(im)); break;
+                    case PacketType.VRPositions: OnVRPositions(new PacketVRPositions(im)); break;
+    #endif
+
+                    default:
+                        SRMP.Log($"Got unhandled packet: {type} " + Enum.GetName(typeof(PacketType), type));
+                        break;
+                }
+
             }
-
-            switch (type)
+            catch (Exception ex)
             {
-                //Player amimations
-                case PacketType.PlayerAnimation: OnPlayerAnimation(new PacketPlayerAnimation(im)); break;
-
-                //Players
-                case PacketType.PlayerJoined: OnPlayerJoined(new PacketPlayerJoined(im)); break;
-                case PacketType.PlayerLeft: OnPlayerLeft(new PacketPlayerLeft(im)); break;
-                case PacketType.PlayerLoaded: OnPlayerLoaded(new PacketPlayerLoaded(im)); break;
-                case PacketType.PlayerPosition: OnPlayerPosition(new PacketPlayerPosition(im)); break;
-                case PacketType.PlayerFX: OnPlayerFX(new PacketPlayerFX(im)); break;
-                case PacketType.PlayerCurrency: OnPlayerCurrency(new PacketPlayerCurrency(im)); break;
-                case PacketType.PlayerCurrencyDisplay:
-                    OnPlayerCurrencyDisplay(new PacketPlayerCurrencyDisplay(im)); break;
-                case PacketType.PlayerUpgrade: OnPlayerUpgrade(new PacketPlayerUpgrade(im)); break;
-                case PacketType.PlayerUpgradeUnlock: OnPlayerUpgradeUnlock(new PacketPlayerUpgradeUnlock(im)); break;
-                case PacketType.PlayerChat: OnPlayerChat(new PacketPlayerChat(im)); break;
-                case PacketType.KickPlayer: OnPlayerKicked(new PacketKickClient(im)); break;
-
-                // Region
-                case PacketType.RegionOwner: OnRegionOwner(new PacketRegionOwner(im)); break;
-
-                //Actors
-                case PacketType.Actors: OnActors(new PacketActors(im)); break;
-                case PacketType.ActorSpawn: OnActorSpawn(new PacketActorSpawn(im)); break;
-                case PacketType.ActorDestroy: OnActorDestroy(new PacketActorDestroy(im)); break;
-                case PacketType.ActorOwner: OnActorOwner(new PacketActorOwner(im)); break;
-                case PacketType.ActorPosition: OnActorPosition(new PacketActorPosition(im)); break;
-                case PacketType.ActorResourceAttach: OnActorResourceAttach(new PacketActorResourceAttach(im)); break;
-                case PacketType.ActorResourceState: OnActorResourceState(new PacketActorResourceState(im)); break;
-                case PacketType.ActorReproduceTime: OnActorReproduceTime(new PacketActorReproduceTime(im)); break;
-                case PacketType.ActorEmotions: OnActorEmotions(new PacketActorEmotions(im)); break;
-                case PacketType.ActorFeral: OnActorFeral(new PacketActorFeral(im)); break;
-                case PacketType.ActorFX: OnActorFX(new PacketActorFX(im)); break;
-
-                //LandPlots
-                case PacketType.LandPlots: OnLandPlots(new PacketLandplots(im)); break;
-                case PacketType.LandPlotSiloInsert: OnLandPlotSiloInsert(new PacketLandPlotSiloInsert(im)); break;
-                case PacketType.LandPlotSiloRemove: OnLandPlotSiloRemove(new PacketLandPlotSiloRemove(im)); break;
-                case PacketType.LandPlotAsh: OnLandPlotAsh(new PacketLandPlotAsh(im)); break;
-                case PacketType.LandPlotSiloSlot: OnLandPlotSiloSlot(new PacketLandPlotSiloSlot(im)); break;
-                case PacketType.LandPlotFeederSpeed: OnLandPlotFeederSpeed(new PacketLandPlotFeederSpeed(im)); break;
-                case PacketType.LandPlotCollect: OnLandPlotCollect(new PacketLandPlotCollect(im)); break;
-                case PacketType.LandPlotReplace: OnLandPlotReplace(new PacketLandPlotReplace(im)); break;
-                case PacketType.LandPlotUpgrade: OnLandPlotUpgrade(new PacketLandPlotUpgrade(im)); break;
-                case PacketType.LandPlotPlantGarden: OnLandPlotPlantGarden(new PacketLandPlotPlantGarden(im)); break;
-                case PacketType.LandPlotStartCollection:
-                    OnLandPlotStartCollection(new PacketLandPlotStartCollection(im)); break;
-                case PacketType.LandPlotSiloAmmoAdd: OnLandPlotSiloAmmoAdd(new PacketLandPlotSiloAmmoAdd(im)); break;
-                case PacketType.LandPlotSiloAmmoRemove:
-                    OnLandPlotSiloAmmoRemove(new PacketLandPlotSiloAmmoRemove(im)); break;
-                case PacketType.LandPlotSiloAmmoClear:
-                    OnLandPlotSiloAmmoClear(new PacketLandPlotSiloAmmoClear(im)); break;
-
-                //World
-                case PacketType.WorldData: OnWorldData(new PacketWorldData(im)); break;
-                case PacketType.WorldTime: OnWorldTime(new PacketWorldTime(im)); break;
-                case PacketType.Pong: OnPong(new PacketPong(im)); break;
-                case PacketType.PlayerPings: OnPlayerPings(new PacketPlayerPings(im)); break;
-                case PacketType.NameSuggestions: OnNameSuggestions(new PacketNameSuggestions(im)); break;
-                case PacketType.WorldFastForward: OnWorldFastForward(new PacketWorldFastForward(im)); break;
-                case PacketType.WorldProgress: OnWorldProgress(new PacketWorldProgress(im)); break;
-                case PacketType.WorldKey: OnWorldKey(new PacketWorldKey(im)); break;
-                case PacketType.WorldMapUnlock: OnWorldMapUnlock(new PacketWorldMapUnlock(im)); break;
-                case PacketType.WorldSwitchActivate: OnWorldSwitchActivate(new PacketWorldSwitchActivate(im)); break;
-                case PacketType.WorldSelectPalette: OnWorldSelectPalette(new PacketWorldSelectPalette(im)); break;
-                case PacketType.WorldSwitches: OnWorldSwitches(new PacketWorldSwitches(im)); break;
-                case PacketType.WorldDecorizer: OnWorldDecorizer(new PacketWorldDecorizer(im)); break;
-                case PacketType.WorldDecorizerSetting:
-                    OnWorldDecorizerSetting(new PacketWorldDecorizerSetting(im)); break;
-                case PacketType.WorldMarketPrices: OnWorldMarketPrices(new PacketWorldMarketPrices(im)); break;
-                case PacketType.WorldCredits: OnWorldCredits(new PacketWorldCredits(im)); break;
-                case PacketType.WorldMailSend: OnWorldMailSend(new PacketWorldMailSend(im)); break;
-                case PacketType.WorldMailRead: OnWorldMailRead(new PacketWorldMailRead(im)); break;
-
-                //FX
-                case PacketType.GlobalFX: OnGlobalFX(new PacketGlobalFX(im)); break;
-                case PacketType.IncinerateFX: OnIncinerateFX(new PacketIncinerateFX(im)); break;
-                case PacketType.PlayAudio: OnPlayAudio(new PacketPlayAudio(im)); break;
-
-                //AccessDoors
-                case PacketType.AccessDoors: OnAccessDoors(new PacketAccessDoors(im)); break;
-                case PacketType.AccessDoorOpen: OnAccessDoorOpen(new PacketAccessDoorOpen(im)); break;
-
-                //Gordos
-                case PacketType.Gordos: OnGordos(new PacketGordos(im)); break;
-                case PacketType.GordoEat: OnGordoEat(new PacketGordoEat(im)); break;
-
-                //PuzzleSlots
-                case PacketType.PuzzleSlots: OnPuzzleSlots(new PacketPuzzleSlots(im)); break;
-                case PacketType.PuzzleSlotFilled: OnPuzzleSlotFilled(new PacketPuzzleSlotFilled(im)); break;
-                case PacketType.PuzzleGateActivate: OnPuzzleGateActivate(new PacketPuzzleGateActivate(im)); break;
-
-                //Pedia
-                case PacketType.PediaShowPopup: OnPediaShowPopup(new PacketPediaShowPopup(im)); break;
-                case PacketType.PediaUnlock: OnPediaUnlock(new PacketPediaUnlock(im)); break;
-
-                //gadgets
-                case PacketType.Gadgets: OnGadgets(new PacketGadgets(im)); break;
-                case PacketType.GadgetRemove: OnGadgetRemove(new PacketGadgetRemove(im)); break;
-                case PacketType.GadgetRotation: OnGadgetRotation(new PacketGadgetRotation(im)); break;
-                case PacketType.GadgetRefinerySpend: OnGadgetRefinerySpend(new PacketGadgetRefinerySpend(im)); break;
-                case PacketType.GadgetAdd: OnGadgetAdd(new PacketGadgetAdd(im)); break;
-                case PacketType.GadgetAddBlueprint: OnGadgetAddBlueprint(new PacketGadgetAddBlueprint(im)); break;
-                case PacketType.GadgetSpend: OnGadgetSpend(new PacketGadgetSpend(im)); break;
-                case PacketType.GadgetSpawn: OnGadgetSpawn(new PacketGadgetSpawn(im)); break;
-                case PacketType.GadgetExtractorUpdate:
-                    OnGadgetExtractorUpdate(new PacketGadgetExtractorUpdate(im)); break;
-                case PacketType.GadgetTurrets: OnGadgetTurrets(new PacketGadgetTurrets(im)); break;
-                case PacketType.GadgetSnareAttach: OnGadgetSnareAttach(new PacketGadgetSnareAttach(im)); break;
-                case PacketType.GadgetSnareGordo: OnGadgetSnareGordo(new PacketGadgetSnareGordo(im)); break;
-                case PacketType.GadgetEchoNetTime: OnGadgetEchoNetTime(new PacketGadgetEchoNetTime(im)); break;
-
-                //Fashion
-                case PacketType.FashionAttach: OnFashionAttach(new PacketFashionAttach(im)); break;
-                case PacketType.FashionDetachAll: OnFashionDetachAll(new PacketFashionDetachAll(im)); break;
-
-                //Drone
-                case PacketType.DroneAmmoAdd: OnDroneAmmoAdd(new PacketDroneAmmoAdd(im)); break;
-                case PacketType.DroneAmmoClear: OnDroneAmmoClear(new PacketDroneAmmoClear(im)); break;
-                case PacketType.DroneAmmoRemove: OnDroneAmmoRemove(new PacketDroneAmmoRemove(im)); break;
-                case PacketType.DroneAnimation: OnDroneAnimation(new PacketDroneAnimation(im)); break;
-                case PacketType.DronePrograms: OnDronePrograms(new PacketDronePrograms(im)); break;
-                case PacketType.DroneLiquid: OnDroneLiquid(new PacketDroneLiquid(im)); break;
-                case PacketType.DroneStationEnabled: OnDroneStationEnabled(new PacketDroneStationEnabled(im)); break;
-                case PacketType.DronePosition: OnDronePosition(new PacketDronePosition(im)); break;
-                case PacketType.DroneActive: OnDroneActive(new PacketDroneActive(im)); break;
-
-                //TreasurePod
-                case PacketType.TreasurePods: OnTreasurePods(new PacketTreasurePods(im)); break;
-                case PacketType.TreasurePodOpen: OnTreasurePodOpen(new PacketTreasurePodOpen(im)); break;
-
-                //Exchanges
-                case PacketType.ExchangeOffers: OnExchangeOffers(new PacketExchangeOffers(im)); break;
-                case PacketType.ExchangeOffer: OnExchangeOffer(new PacketExchangeOffer(im)); break;
-                case PacketType.ExchangeClear: OnExchangeClear(new PacketExchangeClear(im)); break;
-                case PacketType.ExchangePrepareDaily: OnExchangePrepareDaily(new PacketExchangePrepareDaily(im)); break;
-                case PacketType.ExchangeTryAccept: OnExchangeTryAccept(new PacketExchangeTryAccept(im)); break;
-
-                //Oasis
-                case PacketType.Oasis: OnOasis(new PacketOasis(im)); break;
-                case PacketType.OasisLive: OnOasisLive(new PacketOasisLive(im)); break;
-
-                //FireColumns
-                case PacketType.FireColumnActivate: OnFireColumnActivate(new PacketFireColumnActivate(im)); break;
-                case PacketType.FireStormMode: OnFireStormMode(new PacketFireStormMode(im)); break;
-
-                //Others
-                case PacketType.GingerAction: OnGingerAction(new PacketGingerAction(im)); break;
-                case PacketType.KookadobaAction: OnKookadobaAction(new PacketKookadobaAction(im)); break;
-                case PacketType.GingerAttach: OnGingerAttach(new PacketGingerAttach(im)); break;
-                case PacketType.KookadobaAttach: OnKookadobaAttach(new PacketKookadobaAttach(im)); break;
-
-                // Race
-                case PacketType.RaceActivate: OnRaceActivate(new PacketRaceActivate(im)); break;
-                case PacketType.RaceEnd: OnRaceEnd(new PacketRaceEnd(im)); break;
-                case PacketType.RaceTime: OnRaceTime(new PacketRaceTime(im)); break;
-                case PacketType.RaceTrigger: OnRaceTrigger(new PacketRaceTrigger(im)); break;
-
-#if SRML
-                // Mod Compatibility
-                case PacketType.SetNickname: OnSetNickname(new PacketSetNickname(im)); break;
-                case PacketType.VRPositions: OnVRPositions(new PacketVRPositions(im)); break;
-#endif
-
-                default:
-                    SRMP.Log($"Got unhandled packet: {type} " + Enum.GetName(typeof(PacketType), type));
-                    break;
+                NetworkDiagnostics.LogPacketFailure($"[Network] Failed to handle packet {type} on client", ex);
             }
-
-            Globals.HandlePacket = false;
+            finally
+            {
+                Globals.HandlePacket = wasHandlingPacket;
+            }
         }
 
         #region Race
@@ -306,7 +322,7 @@ namespace SRMultiplayer.Networking
         private static void OnGingerAttach(PacketGingerAttach packet)
         {
             var node = GingerPatchNode.allGingerPatches.FirstOrDefault(g => g.id == packet.ID);
-            if (node != null && Globals.Actors.TryGetValue(packet.ActorID, out NetworkActor actor))
+            if (node != null && NetworkActor.TryGetRegistered(packet.ActorID, out NetworkActor actor))
             {
                 actor.GetComponent<ResourceCycle>().Attach(node.spawnJoint, null,
                     new ResourceCycle.DetachmentEvent(node.Harvested));
@@ -317,7 +333,7 @@ namespace SRMultiplayer.Networking
         private static void OnKookadobaAttach(PacketKookadobaAttach packet)
         {
             if (Globals.Kookadobas.TryGetValue(packet.ID, out NetworkKookadobaPatchNode node) &&
-                Globals.Actors.TryGetValue(packet.ActorID, out NetworkActor actor))
+                NetworkActor.TryGetRegistered(packet.ActorID, out NetworkActor actor))
             {
                 actor.GetComponent<ResourceCycle>().Attach(node.Node.spawnJoint, null,
                     new ResourceCycle.DetachmentEvent(node.Node.Harvested));
@@ -624,12 +640,13 @@ namespace SRMultiplayer.Networking
 
         private static void OnDroneAmmoRemove(PacketDroneAmmoRemove packet)
         {
+            if (packet.Count <= 0) return;
             if (SRSingleton<SceneContext>.Instance.GameModel.AllGadgetSites()
                 .TryGetValue(packet.ID, out GadgetSiteModel model))
             {
                 if (model.HasAttached())
                 {
-                    model.attached.transform.GetComponent<DroneGadget>().drone.ammo.Decrement(0, 1);
+                    model.attached.transform.GetComponent<DroneGadget>().drone.ammo.Decrement(0, packet.Count);
                 }
             }
         }
@@ -648,13 +665,14 @@ namespace SRMultiplayer.Networking
 
         private static void OnDroneAmmoAdd(PacketDroneAmmoAdd packet)
         {
+            if (packet.Count <= 0) return;
             if (SRSingleton<SceneContext>.Instance.GameModel.AllGadgetSites()
                 .TryGetValue(packet.ID, out GadgetSiteModel model))
             {
                 if (model.HasAttached())
                 {
                     model.attached.transform.GetComponent<DroneGadget>().drone.ammo
-                        .MaybeAddToSpecificSlot((Identifiable.Id)packet.Ident, null, 0, 1);
+                        .MaybeAddToSpecificSlot((Identifiable.Id)packet.Ident, null, 0, packet.Count, packet.Overflow);
                 }
             }
         }
@@ -668,7 +686,7 @@ namespace SRMultiplayer.Networking
             AttachFashions attachFashions = null;
             if (packet.Type == 1)
             {
-                if (Globals.Actors.TryGetValue(packet.IDInt, out NetworkActor netActor))
+                if (NetworkActor.TryGetRegistered(packet.IDInt, out NetworkActor netActor))
                 {
                     attachFashions = netActor.GetComponentInChildren<AttachFashions>(true);
                 }
@@ -702,7 +720,7 @@ namespace SRMultiplayer.Networking
             AttachFashions attachFashions = null;
             if (packet.Type == 1)
             {
-                if (Globals.Actors.TryGetValue(packet.IDInt, out NetworkActor netActor))
+                if (NetworkActor.TryGetRegistered(packet.IDInt, out NetworkActor netActor))
                 {
                     attachFashions = netActor.GetComponentInChildren<AttachFashions>(true);
                 }
@@ -932,7 +950,7 @@ namespace SRMultiplayer.Networking
                         ((ExtractorModel)attached).cyclesRemaining = ((ExtractorModel)gadgetData.Model).cyclesRemaining;
                         ((ExtractorModel)attached).queuedToProduce = ((ExtractorModel)gadgetData.Model).queuedToProduce;
                         ((ExtractorModel)attached).cycleEndTime = ((ExtractorModel)gadgetData.Model).cycleEndTime;
-                        ((ExtractorModel)attached).cyclesRemaining = ((ExtractorModel)gadgetData.Model).cyclesRemaining;
+                        ((ExtractorModel)attached).nextProduceTime = ((ExtractorModel)gadgetData.Model).nextProduceTime;
                     }
                     else if (attached is WarpDepotModel)
                     {
@@ -1049,28 +1067,29 @@ namespace SRMultiplayer.Networking
 
         private static void OnGordoEat(PacketGordoEat packet)
         {
-            if (!Globals.Gordos.TryGetValue(packet.ID, out NetworkGordo netGordo))
+            if (packet.Request || string.IsNullOrEmpty(packet.ID)) return;
+            if (!Globals.Gordos.TryGetValue(packet.ID, out NetworkGordo gordo) &&
+                Globals.GadgetSites.TryGetValue(packet.ID, out NetworkGadgetSite site))
+                gordo = site.GetComponentInChildren<NetworkGordo>(true);
+            if (gordo == null || gordo.Gordo == null) return;
+            gordo.PendingFood.Remove(packet.FoodID);
+            int previous = gordo.Gordo.GetEatenCount();
+            if (previous == -1) return;
+            if (packet.Count == -1)
             {
-                if (Globals.GadgetSites.TryGetValue(packet.ID, out NetworkGadgetSite netSite))
-                {
-                    netGordo = netSite.GetComponentInChildren<NetworkGordo>(true);
-                }
+                gordo.Gordo.rewards?.SetupActiveRewards();
+                gordo.Gordo.SetEatenCount(-1);
+                gordo.gameObject.SetActive(false);
+                return;
             }
-
-            if (netGordo != null)
+            gordo.Gordo.SetEatenCount(packet.Count);
+            if (packet.Count > previous)
             {
-                netGordo.Eat(packet.Position, packet.Rotation);
-                netGordo.Gordo.SetEatenCount(netGordo.Gordo.GetEatenCount() + packet.Count);
-                if (packet.Favorite)
-                {
-                    SRBehaviour.SpawnAndPlayFX(netGordo.Gordo.EatFavoriteFX, packet.Position, packet.Rotation);
-                }
-
-                if (netGordo.Gordo.GetEatenCount() >= netGordo.Gordo.GetTargetCount())
-                {
-                    netGordo.Burst();
-                }
+                gordo.Eat(packet.Position, packet.Rotation);
+                if (packet.Favorite && gordo.Gordo.EatFavoriteFX != null)
+                    SRBehaviour.SpawnAndPlayFX(gordo.Gordo.EatFavoriteFX, packet.Position, packet.Rotation);
             }
+            if (packet.Count >= gordo.Gordo.GetTargetCount()) gordo.Burst();
         }
 
         private static void OnGordos(PacketGordos packet)
@@ -1601,7 +1620,7 @@ namespace SRMultiplayer.Networking
                 var collector = model.gameObj.GetComponentInChildren<PlortCollector>();
                 if (collector != null)
                 {
-                    collector.StartCollection();
+                    SRMultiplayer.Patches.PlortCollectorAuthority.StartRequested(collector);
                 }
             }
         }
@@ -1828,7 +1847,7 @@ namespace SRMultiplayer.Networking
 
         private static void OnActorFX(PacketActorFX packet)
         {
-            if (Globals.Actors.TryGetValue(packet.ID, out NetworkActor netActor))
+            if (NetworkActor.TryGetRegistered(packet.ID, out NetworkActor netActor))
             {
                 var type = (PacketActorFX.FXType)packet.Type;
                 var slimeEat = netActor.GetComponentInChildren<SlimeEat>();
@@ -1876,18 +1895,18 @@ namespace SRMultiplayer.Networking
 
         private static void OnActorFeral(PacketActorFeral packet)
         {
-            if (Globals.Actors.TryGetValue(packet.ID, out NetworkActor netActor))
+            if (NetworkActor.TryGetRegistered(packet.ID, out NetworkActor netActor))
             {
                 var slimeFeral = netActor.GetComponentInChildren<SlimeFeral>(true);
                 if (slimeFeral != null)
                 {
                     if (packet.Feral)
                     {
-                        slimeFeral.MakeFeral();
+                        slimeFeral.SetFeral();
                     }
                     else
                     {
-                        slimeFeral.MakeNotFeral(packet.Deagitate);
+                        slimeFeral.ClearFeral(packet.Deagitate);
                     }
                 }
             }
@@ -1895,7 +1914,7 @@ namespace SRMultiplayer.Networking
 
         private static void OnActorEmotions(PacketActorEmotions packet)
         {
-            if (Globals.Actors.TryGetValue(packet.ID, out NetworkActor netActor))
+            if (NetworkActor.TryGetRegistered(packet.ID, out NetworkActor netActor))
             {
                 var emotions = netActor.GetComponentInChildren<SlimeEmotions>(true);
                 if (emotions != null)
@@ -1909,7 +1928,7 @@ namespace SRMultiplayer.Networking
 
         private static void OnActorReproduceTime(PacketActorReproduceTime packet)
         {
-            if (Globals.Actors.TryGetValue(packet.ID, out NetworkActor netActor))
+            if (NetworkActor.TryGetRegistered(packet.ID, out NetworkActor netActor))
             {
                 var reproduce = netActor.GetComponentInChildren<Reproduce>(true);
                 if (reproduce != null)
@@ -1921,7 +1940,7 @@ namespace SRMultiplayer.Networking
 
         private static void OnActorResourceState(PacketActorResourceState packet)
         {
-            if (Globals.Actors.TryGetValue(packet.ID, out NetworkActor netActor))
+            if (NetworkActor.TryGetRegistered(packet.ID, out NetworkActor netActor))
             {
                 var cycle = netActor.GetComponentInChildren<ResourceCycle>(true);
                 if (cycle != null)
@@ -1983,7 +2002,7 @@ namespace SRMultiplayer.Networking
         {
             if (packet.PlotID.Length < 1)
             {
-                if (Globals.Actors.TryGetValue(packet.ID, out NetworkActor netActor) &&
+                if (NetworkActor.TryGetRegistered(packet.ID, out NetworkActor netActor) &&
                     Globals.SpawnResources.TryGetValue(packet.ResourceID, out NetworkSpawnResource netSpawnResource))
                 {
                     var cycle = netActor.GetComponentInChildren<ResourceCycle>(true);
@@ -1996,7 +2015,7 @@ namespace SRMultiplayer.Networking
             }
             else
             {
-                if (Globals.Actors.TryGetValue(packet.ID, out NetworkActor netActor) && SRSingleton<SceneContext>
+                if (NetworkActor.TryGetRegistered(packet.ID, out NetworkActor netActor) && SRSingleton<SceneContext>
                         .Instance.GameModel.AllLandPlots().TryGetValue(packet.PlotID, out LandPlotModel model))
                 {
                     var cycle = netActor.GetComponentInChildren<ResourceCycle>(true);
@@ -2011,15 +2030,24 @@ namespace SRMultiplayer.Networking
 
         private static void OnActorPosition(PacketActorPosition packet)
         {
-            if (Globals.Actors.TryGetValue(packet.ID, out NetworkActor netActor))
+            if (NetworkActor.TryGetRegistered(packet.ID, out NetworkActor netActor))
             {
                 netActor.PositionRotationUpdate(packet.Position, packet.Rotation, false);
             }
         }
 
+        private static void OnActorPositions(PacketActorPositions packet)
+        {
+            foreach (var position in packet.Positions)
+            {
+                if (NetworkActor.TryGetRegistered(position.ID, out NetworkActor netActor))
+                    netActor.PositionRotationUpdate(position.Position, position.Rotation, false);
+            }
+        }
+
         private static void OnActorOwner(PacketActorOwner packet)
         {
-            if (Globals.Actors.TryGetValue(packet.ID, out NetworkActor netActor))
+            if (NetworkActor.TryGetRegistered(packet.ID, out NetworkActor netActor))
             {
                 netActor.SetOwnership(packet.Owner);
             }
@@ -2027,17 +2055,12 @@ namespace SRMultiplayer.Networking
 
         private static void OnActorDestroy(PacketActorDestroy packet)
         {
-            if (Globals.Actors.TryGetValue(packet.ID, out NetworkActor netActor))
-            {
-                netActor.OnDestroyEffect();
-                Destroyer.DestroyActor(netActor.gameObject, "NetworkHandlerServer.OnActorDestroy");
-                Globals.Actors.Remove(netActor.ID);
-            }
+            NetworkActor.DestroyRegistered(packet.ID, "NetworkHandlerClient.OnActorDestroy");
         }
 
         private static void OnActorSpawn(PacketActorSpawn packet)
         {
-            if (!Globals.Actors.ContainsKey(packet.ID))
+            if (!NetworkActor.TryGetRegistered(packet.ID, out _))
             {
                 var prefab = SRSingleton<GameContext>.Instance.LookupDirector.GetPrefab((Identifiable.Id)packet.Ident);
                 var actorObj = SRBehaviour.InstantiateActor(prefab, (RegionRegistry.RegionSetId)packet.RegionSet,
@@ -2062,91 +2085,87 @@ namespace SRMultiplayer.Networking
             var nicknamesEnabled = Globals.NicknamesModInstalled;
             foreach (var actorData in packet.Actors)
             {
-                if (!Globals.Actors.ContainsKey(actorData.ID))
+                GameObject actorObj = null;
+                bool created = false;
+                try
                 {
-                    try
+                    if (!NetworkActor.TryGetRegistered(actorData.ID, out NetworkActor netActor))
                     {
                         var prefab =
                             SRSingleton<GameContext>.Instance.LookupDirector.GetPrefab(
                                 (Identifiable.Id)actorData.Ident);
-                        var actorObj = SRBehaviour.InstantiateActor(prefab,
+                        actorObj = SRBehaviour.InstantiateActor(prefab,
                             (RegionRegistry.RegionSetId)actorData.RegionSet, actorData.Position, actorData.Rotation,
                             false);
-                        var netActor = actorObj.AddComponent<NetworkActor>();
+                        if (actorObj == null) throw new InvalidOperationException("Actor snapshot prefab did not instantiate.");
+                        netActor = actorObj.AddComponent<NetworkActor>();
                         netActor.ID = actorData.ID;
-                        netActor.Owner = actorData.Owner;
-                        netActor.Ident = actorData.Ident;
-                        netActor.RegionSet = actorData.RegionSet;
-                        netActor.PositionRotationUpdate(actorData.Position, actorData.Rotation, true);
-
-                        if (actorData.ProduceModel != null)
-                        {
-                            var resourceCycle = actorObj.GetComponentInChildren<ResourceCycle>(true);
-                            if (resourceCycle != null)
-                            {
-                                resourceCycle.SetInitState(actorData.ProduceModel.state,
-                                    actorData.ProduceModel.progressTime);
-                            }
-                        }
-
-                        if (actorData.PlortModel != null)
-                        {
-                            var plortDestroy = actorObj.GetComponentInChildren<DestroyPlortAfterTime>(true);
-                            if (plortDestroy != null)
-                            {
-                                plortDestroy.plortModel.destroyTime = actorData.PlortModel.destroyTime;
-                            }
-                        }
-
-                        if (actorData.AnimalModel != null)
-                        {
-                            var reproduce = actorObj.GetComponentInChildren<Reproduce>(true);
-                            if (reproduce != null)
-                            {
-                                reproduce.model.fashions = actorData.AnimalModel.fashions;
-                                reproduce.model.nextReproduceTime = actorData.AnimalModel.nextReproduceTime;
-                                reproduce.model.transformTime = actorData.AnimalModel.transformTime;
-
-                                reproduce.model.NotifyParticipants(actorObj);
-                            }
-                        }
-
-                        if (actorData.SlimeModel != null)
-                        {
-                            var slimeEat = actorObj.GetComponentInChildren<SlimeEat>(true);
-                            if (slimeEat != null)
-                            {
-                                slimeEat.slimeModel.emotionAgitation.currVal =
-                                    actorData.SlimeModel.emotionAgitation.currVal;
-                                slimeEat.slimeModel.emotionFear.currVal = actorData.SlimeModel.emotionFear.currVal;
-                                slimeEat.slimeModel.emotionHunger.currVal = actorData.SlimeModel.emotionHunger.currVal;
-                                slimeEat.slimeModel.isFeral = actorData.SlimeModel.isFeral;
-                                slimeEat.slimeModel.isGlitch = actorData.SlimeModel.isGlitch;
-                                slimeEat.slimeModel.fashions = actorData.SlimeModel.fashions;
-
-                                slimeEat.slimeModel.NotifyParticipants(actorObj);
-                            }
-                        }
-
-
-
-#if SRML
-                        if (nicknamesEnabled)
-                            netActor.GetComponent(AccessTools.TypeByName("Nicknames.SlimeNickname"))
-                                .SetField("Name", actorData.NicknameModValue);
-#endif
-
-
+                        created = true;
                         Globals.Actors.Add(netActor.ID, netActor);
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        SRMP.Log($"Could not create actor {actorData.ID}: {ex}");
+                        actorObj = netActor.gameObject;
                     }
+
+                    netActor.Owner = actorData.Owner;
+                    netActor.Ident = actorData.Ident;
+                    netActor.RegionSet = actorData.RegionSet;
+                    netActor.PositionRotationUpdate(actorData.Position, actorData.Rotation, true);
+
+                    if (actorData.ProduceModel != null)
+                    {
+                        var resourceCycle = actorObj.GetComponentInChildren<ResourceCycle>(true);
+                        if (resourceCycle != null)
+                            resourceCycle.SetInitState(actorData.ProduceModel.state, actorData.ProduceModel.progressTime);
+                    }
+
+                    if (actorData.PlortDestroyTime.HasValue)
+                    {
+                        var plortDestroy = actorObj.GetComponentInChildren<DestroyPlortAfterTime>(true);
+                        if (plortDestroy != null) plortDestroy.plortModel.destroyTime = actorData.PlortDestroyTime.Value;
+                    }
+
+                    if (actorData.AnimalModel != null)
+                    {
+                        var reproduce = actorObj.GetComponentInChildren<Reproduce>(true);
+                        if (reproduce != null)
+                        {
+                            reproduce.model.fashions = actorData.AnimalModel.fashions;
+                            reproduce.model.nextReproduceTime = actorData.AnimalModel.nextReproduceTime;
+                            reproduce.model.transformTime = actorData.AnimalModel.transformTime;
+                            reproduce.model.NotifyParticipants(actorObj);
+                        }
+                    }
+
+                    if (actorData.SlimeModel != null)
+                    {
+                        var slimeEat = actorObj.GetComponentInChildren<SlimeEat>(true);
+                        if (slimeEat != null)
+                        {
+                            slimeEat.slimeModel.emotionAgitation.currVal = actorData.SlimeModel.emotionAgitation.currVal;
+                            slimeEat.slimeModel.emotionFear.currVal = actorData.SlimeModel.emotionFear.currVal;
+                            slimeEat.slimeModel.emotionHunger.currVal = actorData.SlimeModel.emotionHunger.currVal;
+                            slimeEat.slimeModel.isFeral = actorData.SlimeModel.isFeral;
+                            slimeEat.slimeModel.isGlitch = actorData.SlimeModel.isGlitch;
+                            slimeEat.slimeModel.fashions = actorData.SlimeModel.fashions;
+                            slimeEat.slimeModel.NotifyParticipants(actorObj);
+                        }
+                    }
+
+#if SRML
+                    if (nicknamesEnabled)
+                        NetworkNickname.SetName(netActor, "Nicknames.SlimeNickname", actorData.NicknameModValue);
+#endif
                 }
-                else
+                catch (Exception ex)
                 {
-                    SRMP.Log($"Dublicate Actor ID: {actorData.ID}");
+                    if (created && actorObj != null)
+                    {
+                        Globals.Actors.Remove(actorData.ID);
+                        Destroyer.DestroyActor(actorObj, "SRMP incomplete snapshot actor");
+                    }
+                    SRMP.Log($"Could not apply actor snapshot {actorData.ID}: {ex}");
                 }
             }
         }
@@ -2208,7 +2227,8 @@ namespace SRMultiplayer.Networking
         private static void OnPlayerCurrency(PacketPlayerCurrency packet)
         {
             SRSingleton<SceneContext>.Instance.PlayerState.model.currency = packet.Total;
-            SRSingleton<PopupElementsUI>.Instance.CreateCoinsPopup(packet.Adjust, (PlayerState.CoinsType)packet.Type);
+            if (packet.Origin != Globals.LocalID)
+                SRSingleton<PopupElementsUI>.Instance.CreateCoinsPopup(packet.Adjust, (PlayerState.CoinsType)packet.Type);
         }
 
         private static void OnPlayerFX(PacketPlayerFX packet)
@@ -2293,66 +2313,6 @@ namespace SRMultiplayer.Networking
                                 (RegionRegistry.RegionSetId)packet.RegionSet);
 
 
-                            //only reload inventory if this is a load up packet and NOT a tp packet
-                            if (!Globals.IsServer)
-                            {
-                                try
-                                {
-                                    using (FileStream file = new FileStream(
-                                               Path.Combine(SRMP.ModDataPath, Globals.CurrentGameName + ".player"),
-                                               FileMode.Open))
-                                    {
-                                        using (BinaryReader reader = new BinaryReader(file))
-                                        {
-                                            Debug.Log(
-                                                $"Loading {Path.Combine(SRMP.ModDataPath, Globals.CurrentGameName + ".player")}");
-                                            var ammoCount = reader.ReadInt32();
-                                            for (int i = 0; i < ammoCount; i++)
-                                            {
-                                                var state = (PlayerState.AmmoMode)reader.ReadByte();
-                                                SRSingleton<SceneContext>.Instance.PlayerState.model.ammoDict[state]
-                                                    .usableSlots = reader.ReadInt32();
-                                                var slotCount = reader.ReadInt32();
-                                                SRSingleton<SceneContext>.Instance.PlayerState.model.ammoDict[state]
-                                                    .slots = new Ammo.Slot[slotCount];
-                                                for (int j = 0; j < slotCount; j++)
-                                                {
-                                                    if (reader.ReadBoolean())
-                                                    {
-                                                        SRSingleton<SceneContext>.Instance.PlayerState.model
-                                                                .ammoDict[state].slots[j] =
-                                                            new Ammo.Slot((Identifiable.Id)reader.ReadUInt16(),
-                                                                reader.ReadInt32());
-                                                        if (reader.ReadBoolean())
-                                                        {
-                                                            SRSingleton<SceneContext>.Instance.PlayerState.model
-                                                                    .ammoDict[state].slots[j].emotions =
-                                                                new SlimeEmotionData();
-                                                            var emotionCount = reader.ReadInt32();
-                                                            for (int k = 0; k < emotionCount; k++)
-                                                            {
-                                                                SRSingleton<SceneContext>.Instance.PlayerState.model
-                                                                    .ammoDict[state].slots[j].emotions
-                                                                    .Add((SlimeEmotions.Emotion)reader.ReadUInt16(),
-                                                                        reader.ReadSingle());
-                                                            }
-                                                        }
-                                                    }
-                                                    else
-                                                    {
-                                                        SRSingleton<SceneContext>.Instance.PlayerState.model
-                                                            .ammoDict[state].slots[j] = null;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    Debug.Log($"No savefile for {Globals.CurrentGameName}: {ex.Message}");
-                                }
-                            }
                         }
                         else
                         {
@@ -2384,7 +2344,12 @@ namespace SRMultiplayer.Networking
             {
                 if (player.IsLocal)
                 {
+                    if (Globals.ClientLoaded) return;
                     Globals.ClientLoaded = true;
+                    PlayerInventory.Load();
+                    foreach (var region in Globals.Regions.Values)
+                        if (region != null && region.Region.root.activeInHierarchy)
+                            new PacketRegionChange { ID = region.ID, Load = true }.Send();
                     SRMP.Log("Received all data, multiplayer fully loaded!", "CLIENT");
                     player.IsVR = Globals.VRInstalled;
                 }
@@ -2406,14 +2371,17 @@ namespace SRMultiplayer.Networking
             {
                 GameObject.Destroy(player.gameObject);
                 Globals.Players.Remove(packet.ID);
-                Globals.EpicToPlayer.Remove(Globals.PlayerToEpic[packet.ID]);
+                player.OnLeft();
+                if (Globals.PlayerToEpic.TryGetValue(packet.ID, out var peer)) Globals.EpicToPlayer.Remove(peer);
                 Globals.PlayerToEpic.Remove(packet.ID);
             }
         }
 
         private static void OnPlayerJoined(PacketPlayerJoined packet)
         {
+            if (Globals.Players.ContainsKey(packet.ID)) return;
             var playerObj = new GameObject($"{packet.Username} ({packet.ID})");
+            GameObject.DontDestroyOnLoad(playerObj);
             var player = playerObj.AddComponent<NetworkPlayer>();
             player.ID = packet.ID;
             player.Username = packet.Username;
@@ -2425,6 +2393,7 @@ namespace SRMultiplayer.Networking
         private static void OnPlayerKicked(PacketKickClient packet)
         {
             MultiplayerUI.Instance.kickData = packet;
+            SRMP.ReturnToMainMenu($"server rejected the connection: {packet.reason}");
         }
 
         #endregion

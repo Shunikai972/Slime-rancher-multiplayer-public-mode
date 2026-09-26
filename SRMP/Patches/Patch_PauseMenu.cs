@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using SRMultiplayer.Networking;
 using System;
 using System.Collections.Generic;
@@ -14,9 +14,12 @@ namespace SRMultiplayer.Patches
     [HarmonyPatch("Quit")]
     class PauseMenu_Quit
     {
-        static void Postfix()
+        static void Prefix()
         {
             if (!Globals.IsMultiplayer) return;
+            PlayerInventory.Save();
+            // Scene destruction must never announce gameplay actor removals.
+            Globals.GameLoaded = false;
 
             EpicApplication.Instance.Lobby.LeaveLobby();
                 

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -10,13 +10,17 @@ namespace SRMultiplayer.Networking
 {
     public class NetworkGordo : MonoBehaviour
     {
-        public string ID { get { return Gordo.id == null ? Gordo.GetComponentInParent<GadgetSite>(true).id : Gordo.id; } }
+        public string ID => Gordo == null ? null : !string.IsNullOrEmpty(Gordo.id) ? Gordo.id : Gordo.gameObject.GetInParent<GadgetSite>()?.id;
         public GordoEat Gordo;
         public NetworkRegion Region;
+        internal readonly HashSet<int> PendingFood = new HashSet<int>();
+        private bool bursting;
 
         private void OnDestroy()
         {
-            Globals.Gordos.Remove(ID);
+            var id = ID;
+            if (id != null && Globals.Gordos.TryGetValue(id, out var registered) && registered == this)
+                Globals.Gordos.Remove(id);
         }
 
         public void Eat(Vector3 position, Quaternion rotation)
@@ -33,6 +37,8 @@ namespace SRMultiplayer.Networking
 
         public void Burst()
         {
+            if (bursting || Gordo == null || Gordo.GetEatenCount() == -1) return;
+            bursting = true;
             //if object is in active mark the reach target
             if (gameObject.activeInHierarchy)
             {
@@ -55,6 +61,7 @@ namespace SRMultiplayer.Networking
             SECTR_AudioSystem.Play(Gordo.strainCue, Gordo.transform.position, false);
             //wait for amination/sounds to finish
             yield return new WaitForSeconds(2f);
+            if (Gordo == null) yield break;
             SECTR_AudioSystem.Play(Gordo.burstCue, Gordo.transform.position, false);
 
             //if the gordo has a destroy effect process it
@@ -76,6 +83,7 @@ namespace SRMultiplayer.Networking
             }
             //trigger the burst completed event
             Gordo.DidCompleteBurst();
+            Gordo.rewards?.SetupActiveRewards();
 
             //despawn the bursted gordo from game
             Gordo.gameObject.SetActive(false);

@@ -13,7 +13,7 @@ The revival uses the **SRML build** as the supported installation path.
 3. Download an SRMP Revival release package.
 4. Double-click `Install SRMP.cmd`.
 
-The installer detects common Steam/Epic locations, validates the game folder and `SRML/Mods`, refuses to modify files while the game is running, backs up an existing SRMP build, SHA-256 verifies the replacement, and records enough information for `Uninstall SRMP.cmd` to restore the previous build.
+The installer detects common Steam/Epic locations, validates the game folder and `SRML/Mods`, refuses to modify files while the game is running, stores rollback copies under `SRML/Backups/SRMP` (outside SRML's mod scan), SHA-256 verifies the replacement, and records enough information for `Uninstall SRMP.cmd` to restore the previous build.
 
 For a custom game path:
 
@@ -22,6 +22,10 @@ For a custom game path:
 ```
 
 See [README_REVIVAL.md](README_REVIVAL.md) for release/build details.
+
+## Headless server
+
+SRMP can run its existing authoritative Slime Rancher host without a visible game window. It still needs the x64 game runtime and SRML because world simulation lives in Unity. Windows is the primary target; Linux uses the Windows game through Proton. See [serveur/README.md](serveur/README.md) for setup, idle-time pausing, clean shutdown and current limits.
 
 ## Revival reliability work
 

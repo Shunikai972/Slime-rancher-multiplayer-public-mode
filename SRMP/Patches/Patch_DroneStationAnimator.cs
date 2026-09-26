@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using SRMultiplayer.Networking;
 using SRMultiplayer.Packets;
 using System;
@@ -17,8 +17,8 @@ namespace SRMultiplayer.Patches
         {
             if (!Globals.IsMultiplayer || Globals.HandlePacket) return true;
 
-            var netDrone = __instance.GetComponentInParent<NetworkDrone>();
-            if (netDrone != null && netDrone.IsLocal)
+            var netDrone = __instance.GetComponentInParent<DroneGadget>()?.drone?.GetComponent<NetworkDrone>();
+            if (netDrone != null && netDrone.IsLocal && netDrone.Drone.droneModel != null)
             {
                 new PacketDroneStationEnabled()
                 {
@@ -27,7 +27,7 @@ namespace SRMultiplayer.Patches
                 }.Send();
                 return true;
             }
-            return false;
+            return true;
         }
     }
 }
