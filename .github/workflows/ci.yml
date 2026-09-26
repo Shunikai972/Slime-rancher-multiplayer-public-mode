@@ -115,13 +115,13 @@ jobs:
             if ($project -notmatch [regex]::Escape($reference)) {
               throw "Expected project reference is missing from SRMP.csproj: $reference"
             }
-            if ($builder -notmatch [regex]::Escape($reference)) {
-              throw "Build-SRMP.ps1 does not stage required reference: $reference"
-            }
           }
 
-          if ($builder -notmatch 'UnityCoreMod') {
-            throw 'Build-SRMP.ps1 must explicitly handle the obsolete UnityCoreMod project references for SRML builds.'
+          if ($project -notmatch 'GameManagedPath') {
+            throw 'SRMP.csproj must configure GameManagedPath in AssemblySearchPaths.'
+          }
+          if ($project -notmatch 'SRMLLibPath') {
+            throw 'SRMP.csproj must configure SRMLLibPath in AssemblySearchPaths.'
           }
           if ($builder -notmatch 'SlimeRancher_Data\\Managed') {
             throw 'Build-SRMP.ps1 no longer resolves game Managed assemblies.'
@@ -129,10 +129,26 @@ jobs:
           if ($builder -notmatch 'SRML\\Libs') {
             throw 'Build-SRMP.ps1 no longer resolves SRML libraries.'
           }
+          if ($builder -notmatch 'GameManagedPath') {
+            throw 'Build-SRMP.ps1 must pass GameManagedPath to MSBuild.'
+          }
+          if ($builder -notmatch 'SRMLLibPath') {
+            throw 'Build-SRMP.ps1 must pass SRMLLibPath to MSBuild.'
+          }
 
           Write-Host 'External reference contract is complete.'
-          Write-Host 'UnityCoreMod is treated as an obsolete project reference and is not staged for SRML builds.'
-          Write-Host 'The real SRMP DLL build intentionally runs on a Windows machine with a licensed Slime Rancher 1 + SRML installation.'
+          Write-Host 'References are resolved dynamically in place via AssemblySearchPaths.'
+          Write-Host 'The real SRMP DLL build runs on a Windows machine with a licensed Slime Rancher 1 + SRML installation.'
+
+      - name: Run installer test suite
+        shell: pwsh
+        run: |
+          & ./scripts/Test-Installer.ps1
+
+      - name: Run transport and save regression tests
+        shell: pwsh
+        run: |
+          dotnet run --project tests/SRMP.RegressionTests.csproj
 
       - name: Verify hosted runner does not contain proprietary game assemblies
         shell: pwsh
