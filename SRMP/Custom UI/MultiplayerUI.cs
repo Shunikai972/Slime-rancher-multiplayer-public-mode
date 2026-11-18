@@ -471,21 +471,21 @@ public class MultiplayerUI : SRSingleton<MultiplayerUI>
 
         GUILayout.Label("Join with server code:");
         GUILayout.BeginHorizontal();
-        servercode = GUILayout.TextField(servercode, ServerCode.Length, GUILayout.Width(170));
-        servercode = ServerCode.Normalize(servercode);
+        servercode = GUILayout.TextField(servercode, ServerCode.MaxLength, GUILayout.Width(170));
+        servercode = ServerCode.Clean(servercode);       // a SlimeBridge code is case-sensitive: never upper-case while typing
         bool previousGuiEnabled = GUI.enabled;
-        GUI.enabled = previousGuiEnabled && ServerCode.IsValid(servercode);
+        GUI.enabled = previousGuiEnabled && ServerCode.IsValid(ServerCode.Normalize(servercode));
         if (GUILayout.Button("Join"))
         {
             error = ConnectError.None;
             errorMessage = null;
             lastCodeUse = 5;
-            EpicApplication.Instance.Lobby.JoinLobby(servercode);
+            EpicApplication.Instance.Lobby.JoinLobby(ServerCode.Normalize(servercode));
         }
         GUI.enabled = previousGuiEnabled;
         GUILayout.EndHorizontal();
-        if (!ServerCode.IsValid(servercode))
-            GUILayout.Label("Enter the full 7-character code.");
+        if (!ServerCode.IsValid(ServerCode.Normalize(servercode)))
+            GUILayout.Label("Enter the 7-character code, or the 9-character SlimeBridge code.");
     }
 
     /// <summary>

@@ -1575,6 +1575,7 @@
     <Compile Include="Networking\PlayerInventory.cs" />
     <Compile Include="Utils\AtomicFile.cs" />
     <Compile Include="Utils\ServerCode.cs" />
+    <Compile Include="SlimeBridgeLink.cs" />
     <Compile Include="Console\SRMPConsole.cs" />
     <Compile Include="Utils\Compression.cs" />
     <Compile Include="Utils\Extensions.cs" />

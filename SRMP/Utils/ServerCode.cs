@@ -7,27 +7,49 @@ namespace SRMultiplayer
     /// <summary>
     /// The shareable lobby code format. Keep generation, UI and EOS validation
     /// on the same length and alphabet so a displayed code is always joinable.
+    /// Two formats are accepted: SRMP's own 7-character code, and the 9-character
+    /// SlimeBridge session code (Base58, case-sensitive: the same code Ranching
+    /// Together shows in Slime Rancher 2), so one code joins both games.
     /// </summary>
     internal static class ServerCode
     {
         internal const int Length = 7;
+        internal const int LinkedLength = 9;
+        internal const int MaxLength = LinkedLength;
         private const string Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        private const string Base58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
-        internal static string Normalize(string value)
+        /// <summary>Spaces and dashes removed, case kept (what the player is typing).</summary>
+        internal static string Clean(string value)
         {
             if (string.IsNullOrEmpty(value)) return string.Empty;
-
-            var normalized = new StringBuilder(value.Length);
+            var cleaned = new StringBuilder(value.Length);
             foreach (char character in value)
             {
                 if (char.IsWhiteSpace(character) || character == '-') continue;
-                normalized.Append(char.ToUpperInvariant(character));
+                cleaned.Append(character);
             }
-            return normalized.ToString();
+            return cleaned.ToString();
+        }
+
+        internal static string Normalize(string value)
+        {
+            var cleaned = Clean(value);
+            return IsLinked(cleaned) ? cleaned : cleaned.ToUpperInvariant();
+        }
+
+        /// <summary>A 9-character SlimeBridge session code (the Ranching Together join code of the same session).</summary>
+        internal static bool IsLinked(string value)
+        {
+            if (value == null || value.Length != LinkedLength) return false;
+            foreach (char character in value)
+                if (Base58.IndexOf(character) < 0) return false;
+            return true;
         }
 
         internal static bool IsValid(string value)
         {
+            if (IsLinked(value)) return true;
             if (value == null || value.Length != Length) return false;
             foreach (char character in value)
             {

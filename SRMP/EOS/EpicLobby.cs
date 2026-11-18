@@ -406,9 +406,14 @@ namespace SRMultiplayer.EpicSDK
             return false;
         }
         
+        /// <summary>A code chosen by SlimeBridge for the next lobby (its session code), used once.</summary>
+        internal static string RequestedCode;
+
         public static string GenerateServerCode()
         {
-            return ServerCode.Generate();
+            var requested = RequestedCode;
+            RequestedCode = null;
+            return requested != null && ServerCode.IsValid(requested) ? requested : ServerCode.Generate();
         }
 
     }
