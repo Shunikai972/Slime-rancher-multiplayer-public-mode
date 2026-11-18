@@ -43,27 +43,27 @@ namespace SRMultiplayer
         }
 
         /// <summary>
-        /// Signs in to Epic Online Services when that has not happened yet. SRMP signs in with the player's SRMP username:
-        /// a player who never opened SRMP's menu has none, and Epic refuses a sign-in without a display name. Such a player
-        /// gets <paramref name="fallbackName"/> (kept as their SRMP username, which they can change in SRMP's menu).
-        /// Returns "" when signed in or signing in, else why not. Safe to call every frame: it never starts two sign-ins.
+        /// Starts SRMP's own sign-in (anonymous device sign-in, no account) with the name the player chose: the name given
+        /// here (typed in SlimeBridge), else the one already saved in SRMP's menu. Never invents a name: without one it
+        /// returns "needs_name" and does nothing. Returns "" when signed in or signing in.
         /// </summary>
-        public static string SignIn(string fallbackName)
+        public static string SignIn(string name)
         {
             try
             {
                 var app = EpicApplication.Instance;
                 if (app == null || app.Authentication == null) return "srmp_not_ready";
                 if (app.Authentication.IsLoggedIn) return "";
-                var name = string.IsNullOrEmpty(Globals.Username) ? fallbackName : Globals.Username;
-                if (string.IsNullOrEmpty(name) || !System.Text.RegularExpressions.Regex.IsMatch(name, @"^[a-zA-Z_][\w]*$")) name = "Rancher";
-                if (string.IsNullOrEmpty(Globals.Username))
+                var valid = !string.IsNullOrEmpty(name) && System.Text.RegularExpressions.Regex.IsMatch(name, @"^[a-zA-Z_][\w]*$");
+                if (!string.IsNullOrEmpty(name) && !valid) return "bad_name";
+                if (valid)
                 {
                     Globals.Username = name;
                     UnityEngine.PlayerPrefs.SetString("SRMP_Username", name);
                     UnityEngine.PlayerPrefs.Save();
                 }
-                app.Authentication.Login(name);
+                if (string.IsNullOrEmpty(Globals.Username)) return "needs_name";
+                app.Authentication.Login(Globals.Username);
                 return "";
             }
             catch (Exception ex) { return "sign_in_failed:" + ex.GetType().Name; }
