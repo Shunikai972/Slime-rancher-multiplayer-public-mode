@@ -69,6 +69,34 @@ namespace SRMultiplayer
             catch (Exception ex) { return "sign_in_failed:" + ex.GetType().Name; }
         }
 
+        /// <summary>
+        /// Uses <paramref name="name"/> (typed by the player in SlimeBridge) as the SRMP username, as SRMP's own "Save
+        /// Username" does: saved, then signed in again under it when it changed. Returns "" when done, "not_ready" while SRMP
+        /// is still starting (call again later), or why not.
+        /// </summary>
+        public static string SetName(string name)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(name) || !System.Text.RegularExpressions.Regex.IsMatch(name, @"^[a-zA-Z_][\w]*$")) return "bad_name";
+                var app = EpicApplication.Instance;
+                if (app == null || app.Authentication == null || !app.Authentication.DeviceCreated) return "not_ready";
+                var auth = app.Authentication;
+                if (Globals.Username != name)
+                {
+                    Globals.Username = name;
+                    UnityEngine.PlayerPrefs.SetString("SRMP_Username", name);
+                    UnityEngine.PlayerPrefs.Save();
+                }
+                if (auth.IsLoggedIn && auth.Username == name) return "";
+                if (EpicApplication.Instance.Lobby != null && EpicApplication.Instance.Lobby.IsInLobby) return "";   // keep a live session
+                if (auth.IsLoggedIn) auth.Logout();
+                auth.Login(name);
+                return "";
+            }
+            catch (Exception ex) { return "set_name_failed:" + ex.GetType().Name; }
+        }
+
         /// <summary>Opens a lobby; with a valid code (7 or 9 characters) that code is the lobby's. Returns why not, or "".</summary>
         public static string Host(string code)
         {
